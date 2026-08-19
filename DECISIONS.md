@@ -220,3 +220,25 @@ deleted user's id with a placeholder "deleted user" profile) — adds real schem
 Simplicity wins here per the spec's stated priority order (reliability → simplicity →
 polish...). Worth knowing if it's ever surprising in practice: if Steve's brother deletes his
 account, Steve's call history with him disappears too, not just the brother's side of it.
+
+---
+
+## 2026-08-19 — Added a `canceled` call status (spec §8 vs §14 reconciliation)
+
+**Decision:** Added `canceled` as an eleventh `call_sessions.status` value, alongside the ten
+listed in spec §14. `0004_call_sessions.sql`'s CHECK constraint updated before this schema
+ever left local development (no remote existed yet), rather than layered on as a later
+migration.
+
+**Why:** Spec §8 (History) explicitly lists six required outcomes: "completed by timer, ended
+early, declined, missed/no answer, canceled, failed." Spec §14 (Call State) lists ten
+candidate states and never mentions `canceled`, and spec §16's reliability list separately
+requires handling "caller cancels while ringing" as its own distinct case. None of the ten
+§14 states fit that case correctly: `declined` means the *recipient* rejected it, `missed`
+means the recipient's phone rang out unanswered, `failed` implies a technical fault — none of
+these accurately describe the caller voluntarily withdrawing an outgoing call before it
+connects. Rather than force one of those semantically-wrong states, this is a straightforward
+ambiguity to resolve directly and record, per the spec's own instruction. `canceled` is
+reachable from `outgoing` or `ringing` (the caller backing out at either point), is terminal,
+and — like `declined`/`missed`/`failed` — never has a `connected_at`, so it's excluded from
+`CallStatus.wasEverConnected` the same way they are.

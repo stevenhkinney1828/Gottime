@@ -20,8 +20,18 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ Local verification: `deno test`/`deno lint`/`deno fmt --check` all pass (10/10 tests); full migration + RLS dry-run passes against real local Postgres. Caught and fixed three real bugs along the way (a TypeScript BufferSource typing issue in the APNs JWT signer, a transaction-scoping bug in the auth_shim test helpers, and a missing explicit grant on the invite-redemption function) — all before they could cause silent failures later.
 - 🚧 **Owner gate #1 (remaining piece): an empty GitHub repository.** Owner already has a GitHub account. Once a repo exists and is connected, CI can run for real (Simulator build/test, SQL/RLS check) instead of relying on local verification alone — see the chat message asking for this.
 
-## Phase 1 — Mocked UX
-⬜ Not started. Full SwiftUI flow against mocks; exhaustive tests for CallStateMachine/DurationPolicy/CallTimer; backend handler logic unit-tested with fake clients.
+## Phase 1 — Mocked UX (in progress)
+- ✅ `GotTimeCore` models: `Profile`, `CallStatus` (11 cases — see DECISIONS.md re: the added `canceled` status), `CallSession`, `Connection`/`ConnectedPerson`/`ConnectionInvite`, `CallHistoryEntry` — all pure Swift, zero Apple-framework imports (verified: only `Foundation` appears anywhere in GotTimeCore)
+- ✅ `GotTimeCore` service protocols: `AuthService`, `ConnectionService`, `VoiceService`, `CallHistoryService`, `PushService`
+- ✅ `CallStateMachine` — the full transition table, an `apply()` helper that stamps timestamps/computes actual duration, exhaustively tested (all 121 from/to pairs checked against an independently-written expected table, plus named tests for every path in spec sections 19-20)
+- ✅ `DurationPolicy` — 1-60 whole-minute validation + presets, tested against the exact boundary matrix spec section 19 calls for
+- ✅ `CallTimer` — connected-timestamp-anchored countdown math, zero accumulating state, tested including the specific "long background gap" scenario spec section 7 is worried about
+- 🔄 `GotTimeMocks` — not yet started
+- 🔄 SwiftUI screens — not yet started
+- ⬜ `request-call`/`call-action` real backend logic with fake-client tests
+- ⬜ XCUITest canonical flow
+
+**None of this Swift code has been compiled yet** — there is no Swift toolchain on this dev machine (see ARCHITECTURE.md/KNOWN_LIMITATIONS.md). Every file has been manually reviewed multiple times (imports checked, brace/paren balance checked, every test's expected values hand-traced against the implementation), but real verification requires either the GitHub repo (gate below) or a manual review by someone who can read Swift critically. This is the reason Phase 1 work paused after GotTimeCore to request the repo again rather than writing substantially more unverified code on top.
 
 ## Phase 2 — Authentication
 ⬜ Not started. 🚧 Will need: Supabase project + credentials; Apple Developer Sign-in-with-Apple Services ID (owner already enrolled in Apple Developer Program).

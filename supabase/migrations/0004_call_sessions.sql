@@ -17,9 +17,11 @@ create table public.call_sessions (
     ended_at timestamptz,
     actual_duration_seconds integer,
     provider_call_sid text,
+    -- 'canceled' is not in the spec's own §14 state list but is required by §8 (History) and
+    -- §16 ("caller cancels while ringing") — see DECISIONS.md.
     status text not null default 'created' check (status in (
         'created', 'outgoing', 'ringing', 'connected', 'declined', 'missed', 'failed',
-        'ended_early', 'timed_out', 'completed'
+        'canceled', 'ended_early', 'timed_out', 'completed'
     )),
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
