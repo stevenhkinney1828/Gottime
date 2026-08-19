@@ -1,0 +1,15 @@
+{
+  "tasks": {
+    "test": "deno test --allow-env --allow-net",
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  },
+  "fmt": {
+    "lineWidth": 100
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

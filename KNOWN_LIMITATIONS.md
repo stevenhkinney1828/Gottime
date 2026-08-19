@@ -1,0 +1,34 @@
+# Known Limitations
+
+Honest gaps and approximations, kept current as the build progresses. Not a bug tracker —
+see BETA_FEEDBACK.md (Phase 9+) for that.
+
+## Local development environment
+
+- **No local Swift compilation.** The development machine is Windows with no Xcode/macOS/
+  Swift toolchain. All iOS code is verified via GitHub Actions' `macos-latest` runner, never
+  locally. This means a compile error in iOS code is only discovered after a push, not
+  before — mitigated by keeping `GotTimeCore` (the highest-risk logic) small, dependency-free,
+  and exhaustively tested so CI runs stay fast (target: 1-3 minutes).
+- **Local Postgres is an approximation of Supabase, not a replacement.** `supabase/seed/auth_shim.sql`
+  stubs `auth.uid()`/`auth.jwt()`/`auth.role()` well enough to dry-run migrations and probe RLS
+  policies as different simulated users, but it does not replicate Supabase's real GoTrue
+  claim structure or connection-pooling role setup exactly. Every RLS policy gets a final
+  verification pass against the real Supabase project once one exists (Phase 2+).
+- **No Simulator access.** Without Xcode, there is no way to visually run the app locally —
+  not even in a simulator. Visual verification happens via CI screenshot/XCUITest output and,
+  from Phase 4 onward, real devices via TestFlight.
+
+## Platform behavior pending real-device confirmation
+
+- **CallKit incoming-call presentation** (composing `"Name • N min"` into
+  `localizedCallerName`) is a reasonable, spec-consistent choice, but CallKit's exact
+  pre-unlock rendering (truncation, font size, whether a second line is ever shown) can only
+  be confirmed on a real locked iPhone — planned for Phase 5.
+- **Twilio server-side `timeLimit` semantics on a live, already-connected call** — whether
+  updating it via the REST API mid-call measures from call start or from the update moment —
+  is assumed conservatively for now and will be empirically confirmed during Phase 4, with
+  [DECISIONS.md](DECISIONS.md) updated to match observed reality.
+
+_This file is updated whenever a limitation is discovered or resolved — not just at the end
+of a phase._

@@ -1,0 +1,158 @@
+name: SQL Lint & RLS Check
+
+# Applies every migration to a throwaway Postgres service container (GitHub-hosted runners
+# already have Docker for this, so no local Docker dependency), then seeds it and asserts
+# Row Level Security actually behaves as documented — a non-connected user must not see
+# another user's profile or calls; a connected/participant user must. This is a more
+# faithful check than the local winget-Postgres dry run (see KNOWN_LIMITATIONS.md) but still
+# not a substitute for a final pass against the real Supabase project.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/seed/**"
+      - ".github/workflows/sql-lint.yml"
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/seed/**"
+      - ".github/workflows/sql-lint.yml"
+  workflow_dispatch: {}
+
+jobs:
+  migrate-and-check-rls:
+    name: Apply migrations + verify RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply auth shim (local approximation of Supabase's auth schema)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/seed/auth_shim.sql
+
+      - name: Apply migrations in order
+        run: |
+          for f in supabase/migrations/*.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Load seed data
+        run: psql -v ON_ERROR_STOP=1 -f supabase/seed/seed.sql
+
+      - name: Verify RLS denies a non-connected user
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          select set_local_test_user('33333333-3333-3333-3333-333333333333');
+          set role authenticated;
+
+          do $$
+          declare
+              v_count int;
+          begin
+              -- Carol is not connected to anyone and must not see Alice's profile.
+              select count(*) into v_count from public.profiles
+                  where id = '11111111-1111-1111-1111-111111111111';
+              if v_count <> 0 then
+                  raise exception 'RLS FAILED: Carol can see Alice''s profile';
+              end if;
+
+              -- Carol is not a participant in the seeded call and must not see it.
+              select count(*) into v_count from public.call_sessions;
+              if v_count <> 0 then
+                  raise exception 'RLS FAILED: Carol can see a call session she is not part of';
+              end if;
+
+              -- Carol must not see Alice and Bob's connection.
+              select count(*) into v_count from public.connections;
+              if v_count <> 0 then
+                  raise exception 'RLS FAILED: Carol can see a connection she is not part of';
+              end if;
+          end $$;
+
+          reset role;
+          select clear_local_test_user();
+          SQL
+
+      - name: Verify RLS allows a connected participant
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          select set_local_test_user('11111111-1111-1111-1111-111111111111');
+          set role authenticated;
+
+          do $$
+          declare
+              v_count int;
+          begin
+              -- Alice is connected to Bob and must see his profile.
+              select count(*) into v_count from public.profiles
+                  where id = '22222222-2222-2222-2222-222222222222';
+              if v_count <> 1 then
+                  raise exception 'RLS FAILED: Alice cannot see Bob''s profile despite an active connection';
+              end if;
+
+              -- Alice is the caller on the seeded call and must see it.
+              select count(*) into v_count from public.call_sessions
+                  where caller_id = '11111111-1111-1111-1111-111111111111';
+              if v_count <> 1 then
+                  raise exception 'RLS FAILED: Alice cannot see her own call session';
+              end if;
+          end $$;
+
+          reset role;
+          select clear_local_test_user();
+          SQL
+
+      - name: Verify invite redemption via the SECURITY DEFINER function
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          -- A fresh user (not Alice, Bob, or Carol) redeems Carol's seeded pending invite and
+          -- ends up connected to Carol — proving redeem_connection_invite() works end to end
+          -- without needing a broad SELECT policy on connection_invites.
+          insert into auth.users (id, raw_user_meta_data)
+              values ('44444444-4444-4444-4444-444444444444', '{"first_name": "Dave"}');
+
+          select set_local_test_user('44444444-4444-4444-4444-444444444444');
+          set role authenticated;
+
+          do $$
+          declare
+              v_connection public.connections;
+              v_count int;
+          begin
+              select * into v_connection from public.redeem_connection_invite('CAROL1');
+              if v_connection.id is null then
+                  raise exception 'redeem_connection_invite did not return a connection';
+              end if;
+
+              select count(*) into v_count from public.connections
+                  where status = 'active'
+                    and (user_a_id = '44444444-4444-4444-4444-444444444444'
+                         or user_b_id = '44444444-4444-4444-4444-444444444444');
+              if v_count <> 1 then
+                  raise exception 'RLS/REDEMPTION FAILED: Dave is not connected to Carol after redeeming her invite';
+              end if;
+          end $$;
+
+          reset role;
+          select clear_local_test_user();
+          SQL

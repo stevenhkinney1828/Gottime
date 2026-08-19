@@ -1,0 +1,49 @@
+# Supabase CLI project configuration. Most sections here only matter for `supabase start`
+# (the Docker-based full local emulator), which this project deliberately doesn't use — see
+# DECISIONS.md and KNOWN_LIMITATIONS.md for why local verification instead uses a plain
+# winget-installed Postgres + supabase/seed/auth_shim.sql. This file still matters for
+# `supabase link` / `supabase db push` / `supabase functions deploy` against the real,
+# hosted project once it exists (Phase 2+).
+
+project_id = "REPLACE_WITH_REAL_PROJECT_REF"
+# Set once the Supabase project is created (Phase 2) — see SETUP.md. Find it in the
+# project's dashboard URL or `supabase projects list`.
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = []
+jwt_expiry = 3600
+enable_signup = false
+# Sign-up happens only via Sign in with Apple (Phase 2), never email/password.
+
+[auth.external.apple]
+enabled = true
+client_id = ""
+secret = ""
+# Populated from the Apple Services ID + Sign-in-with-Apple key once the owner's Apple
+# Developer Program setup for this is complete (Phase 2) — see SETUP.md and DECISIONS.md.
+
+[edge_runtime]
+enabled = true
+
+[functions]
+verify_jwt = true
+# Per-function overrides (e.g. verify_jwt = false for twiml-voice and
+# twilio-status-callback, which are called by Twilio, not by an authenticated app user) are
+# added when those functions are implemented in Phase 4.

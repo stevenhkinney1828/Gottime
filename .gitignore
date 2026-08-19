@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+
+# iOS / Xcode (project.yml is source of truth; the generated project is never committed)
+ios/*.xcodeproj/
+ios/*.xcworkspace/
+ios/DerivedData/
+ios/.build/
+ios/**/.build/
+ios/**/xcuserdata/
+ios/**/*.xcscmblueprint
+ios/**/.swiftpm/
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+
+# Deno
+supabase/functions/**/.deno/
+
+# Environment / secrets — never commit real values
+.env
+.env.local
+*.env.local
+**/secrets/
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Scratch
+*.tmp

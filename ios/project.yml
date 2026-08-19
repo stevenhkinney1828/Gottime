@@ -1,0 +1,86 @@
+# XcodeGen project spec — the ONLY source of truth for the Xcode project.
+# `xcodegen generate` (run by CI, see .github/workflows/ios-ci.yml) turns this into
+# GotTime.xcodeproj, which is gitignored and never hand-edited or committed.
+#
+# Signing is deliberately disabled at the project level for now (see the CODE_SIGNING_*
+# settings below) because through Phase 3 every CI build targets the iOS Simulator, which
+# needs no signing identity at all. Phase 4 introduces a second, separate CI job that signs
+# real device/archive builds with an App Store Connect API key once Apple Developer
+# credentials exist — that job overrides signing settings itself rather than this file
+# assuming a team/profile that doesn't exist yet.
+
+name: GotTime
+options:
+  bundleIdPrefix: com.stevenkinney
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    INFOPLIST_KEY_CFBundleDisplayName: "GotTime?"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  GotTimeCore:
+    path: Packages/GotTimeCore
+  GotTimeMocks:
+    path: Packages/GotTimeMocks
+
+targets:
+  GotTime:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App
+    dependencies:
+      - package: GotTimeCore
+      - package: GotTimeMocks
+    settings:
+      base:
+        PRODUCT_NAME: GotTime
+        PRODUCT_BUNDLE_IDENTIFIER: com.stevenkinney.gottime
+        # Placeholder bundle ID — finalized against whatever App ID gets registered in the
+        # Apple Developer portal at Phase 2 (see DECISIONS.md). One line to change; nothing
+        # else in the codebase references it.
+
+  GotTimeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: GotTimeUITests
+    dependencies:
+      - target: GotTime
+    # No signing override needed here — it inherits CODE_SIGNING_ALLOWED: NO etc. from the
+    # project-level base settings above, the same way every target inherits project settings.
+
+schemes:
+  GotTime:
+    build:
+      targets:
+        GotTime: all
+        GotTimeUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - GotTimeUITests
+    run:
+      config: Debug
+    archive:
+      config: Release

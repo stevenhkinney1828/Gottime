@@ -1,0 +1,100 @@
+name: iOS CI
+
+# This is the only "Mac" this project uses — see ARCHITECTURE.md. Every push regenerates the
+# Xcode project from ios/project.yml (never a committed .xcodeproj) and builds/tests against
+# an iOS Simulator, which needs no signing identity at all. The sign-and-upload job below
+# handles Phase 4+ TestFlight delivery and safely does nothing until those secrets exist.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build-and-test:
+    name: Build & test (Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Test GotTimeCore package
+        working-directory: ios/Packages/GotTimeCore
+        run: swift test
+
+      - name: Test GotTimeMocks package
+        working-directory: ios/Packages/GotTimeMocks
+        run: swift test
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        run: |
+          # Deliberately relies on no simctl positional-argument filtering (category/search
+          # term ordering isn't hand-verifiable in this project's environment) — just the
+          # plain `list --json` form, with every filter expressed in jq instead.
+          DEVICE_UDID=$(xcrun simctl list --json \
+            | jq -r '[.devices[][] | select(.isAvailable == true and (.name | test("iPhone")))] | .[0].udid // empty')
+          if [ -z "$DEVICE_UDID" ]; then
+            echo "No available iPhone simulator found on this runner image" >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Selected simulator UDID: $DEVICE_UDID"
+          echo "udid=$DEVICE_UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test app + UI tests
+        working-directory: ios
+        run: |
+          xcodebuild test \
+            -project GotTime.xcodeproj \
+            -scheme GotTime \
+            -destination "id=${{ steps.simulator.outputs.udid }}"
+
+  # Phase 4+ only. Always runs so it shows up green in the Actions UI, but its real steps are
+  # skipped until APP_STORE_CONNECT_API_KEY_ID (and the other signing secrets) exist — so this
+  # file is complete and correct from Phase 0 onward rather than needing a rewrite later.
+  sign-and-upload:
+    name: Sign & upload to TestFlight
+    needs: build-and-test
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check signing credentials are configured
+        id: check
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: |
+          if [ -z "$APP_STORE_CONNECT_API_KEY_ID" ]; then
+            echo "App Store Connect signing isn't configured yet (Phase 4+) — nothing to do."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Archive, sign, and upload to TestFlight
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          echo "Not yet implemented — lands in Phase 4. See BUILD_STATUS.md and DECISIONS.md."
+          # Will: brew install xcodegen && xcodegen generate, xcodebuild archive using the
+          # App Store Connect API key (APP_STORE_CONNECT_API_KEY_ID/_ISSUER_ID/_P8,
+          # APPLE_TEAM_ID, IOS_BUNDLE_ID secrets) for signing, then upload the resulting .ipa
+          # to TestFlight via `xcrun altool` or the App Store Connect API.
+          exit 1
