@@ -27,9 +27,11 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ `DurationPolicy` — 1-60 whole-minute validation + presets, tested against the exact boundary matrix spec section 19 calls for
 - ✅ `CallTimer` — connected-timestamp-anchored countdown math, zero accumulating state, tested including the specific "long background gap" scenario spec section 7 is worried about
 - ✅ `request-call`/`call-action` real backend logic — server-side duration/connection/ownership validation, dependency-injected and fully tested (27/27 backend tests passing, lint clean, format clean). Caught a real bug in a *test* (not the implementation) along the way: a test meant to check status-based rejection was accidentally using the wrong actor and tripping a role-based rejection instead — fixed once the failure surfaced what it actually meant.
-- 🔄 `GotTimeMocks` — not yet started
+- ✅ `GotTimeMocks` — all 5 mock services implemented: simulated ringing/answer/decline/missed/failed outcomes, a dev-only accelerated timer (DEBUG-only, structurally can't affect production), seed data covering all 6 history statuses, and a `MockEnvironment` wiring them together the way the app actually needs. `MockVoiceService` in particular went through several careful correctness passes for concurrency safety (a single atomic "try apply transition" choke point every code path funnels through, so an explicit user action racing the simulated auto-progression timer can't double-fire a terminal state or double-record history) — reasoned through by hand since there's no compiler here to catch it.
 - 🔄 SwiftUI screens — not yet started
 - ⬜ XCUITest canonical flow
+
+**Swift code volume is now significant** (GotTimeCore + GotTimeMocks: ~30 source/test files) and still entirely uncompiled. This is the point where continuing to add more (the SwiftUI screens) without any real verification starts to carry real risk — see the chat message.
 
 **None of this Swift code has been compiled yet** — there is no Swift toolchain on this dev machine (see ARCHITECTURE.md/KNOWN_LIMITATIONS.md). Every file has been manually reviewed multiple times (imports checked, brace/paren balance checked, every test's expected values hand-traced against the implementation), but real verification requires either the GitHub repo (gate below) or a manual review by someone who can read Swift critically. This is the reason Phase 1 work paused after GotTimeCore to request the repo again rather than writing substantially more unverified code on top.
 
