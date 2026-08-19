@@ -13,8 +13,12 @@ see BETA_FEEDBACK.md (Phase 9+) for that.
 - **Local Postgres is an approximation of Supabase, not a replacement.** `supabase/seed/auth_shim.sql`
   stubs `auth.uid()`/`auth.jwt()`/`auth.role()` well enough to dry-run migrations and probe RLS
   policies as different simulated users, but it does not replicate Supabase's real GoTrue
-  claim structure or connection-pooling role setup exactly. Every RLS policy gets a final
-  verification pass against the real Supabase project once one exists (Phase 2+).
+  claim structure or connection-pooling role setup exactly. As of Phase 0, every migration and
+  every RLS policy has been exercised against a real local Postgres 17 instance using this
+  shim (unconnected-user denial, connected-participant access, invite redemption, duplicate-
+  connection prevention, and duration bounds all verified working) — a good sign, but every
+  policy still gets a final verification pass against the real Supabase project once one
+  exists (Phase 2+), since the shim is still an approximation of GoTrue, not GoTrue itself.
 - **No Simulator access.** Without Xcode, there is no way to visually run the app locally —
   not even in a simulator. Visual verification happens via CI screenshot/XCUITest output and,
   from Phase 4 onward, real devices via TestFlight.
