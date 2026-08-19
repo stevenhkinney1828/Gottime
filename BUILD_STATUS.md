@@ -26,9 +26,9 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ `CallStateMachine` — the full transition table, an `apply()` helper that stamps timestamps/computes actual duration, exhaustively tested (all 121 from/to pairs checked against an independently-written expected table, plus named tests for every path in spec sections 19-20)
 - ✅ `DurationPolicy` — 1-60 whole-minute validation + presets, tested against the exact boundary matrix spec section 19 calls for
 - ✅ `CallTimer` — connected-timestamp-anchored countdown math, zero accumulating state, tested including the specific "long background gap" scenario spec section 7 is worried about
+- ✅ `request-call`/`call-action` real backend logic — server-side duration/connection/ownership validation, dependency-injected and fully tested (27/27 backend tests passing, lint clean, format clean). Caught a real bug in a *test* (not the implementation) along the way: a test meant to check status-based rejection was accidentally using the wrong actor and tripping a role-based rejection instead — fixed once the failure surfaced what it actually meant.
 - 🔄 `GotTimeMocks` — not yet started
 - 🔄 SwiftUI screens — not yet started
-- ⬜ `request-call`/`call-action` real backend logic with fake-client tests
 - ⬜ XCUITest canonical flow
 
 **None of this Swift code has been compiled yet** — there is no Swift toolchain on this dev machine (see ARCHITECTURE.md/KNOWN_LIMITATIONS.md). Every file has been manually reviewed multiple times (imports checked, brace/paren balance checked, every test's expected values hand-traced against the implementation), but real verification requires either the GitHub repo (gate below) or a manual review by someone who can read Swift critically. This is the reason Phase 1 work paused after GotTimeCore to request the repo again rather than writing substantially more unverified code on top.

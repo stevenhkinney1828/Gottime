@@ -1,13 +1,11 @@
-// Placeholder coverage for Phase 0: proves every function's module loads, its handler runs
-// standalone (no live server needed, thanks to the `if (import.meta.main)` guard in each
-// index.ts), and it returns the expected not-implemented stub response. Each of these tests
-// gets replaced by real behavioral tests in the phase noted in its own file's comment.
+// Placeholder coverage for functions still pending their real phase. request-call and
+// call-action graduated out of this file once they got real logic — see requestCall_test.ts
+// and callAction_test.ts. Each remaining entry gets replaced the same way when its phase
+// arrives — see BUILD_STATUS.md.
 import { assertEquals } from "jsr:@std/assert@1";
 import { handler as issueVoiceToken } from "../issue-voice-token/index.ts";
-import { handler as requestCall } from "../request-call/index.ts";
 import { handler as twimlVoice } from "../twiml-voice/index.ts";
 import { handler as twilioStatusCallback } from "../twilio-status-callback/index.ts";
-import { handler as callAction } from "../call-action/index.ts";
 import { handler as registerDevice } from "../register-device/index.ts";
 import { handler as expireCallSweep } from "../expire-call-sweep/index.ts";
 
@@ -17,14 +15,7 @@ function req(): Request {
 
 Deno.test("not-yet-implemented JSON functions return 501 with a phase marker", async () => {
   for (
-    const fn of [
-      issueVoiceToken,
-      requestCall,
-      twilioStatusCallback,
-      callAction,
-      registerDevice,
-      expireCallSweep,
-    ]
+    const fn of [issueVoiceToken, twilioStatusCallback, registerDevice, expireCallSweep]
   ) {
     const response = await fn(req());
     assertEquals(response.status, 501);
