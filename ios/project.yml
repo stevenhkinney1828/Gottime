@@ -20,6 +20,10 @@ configs:
   Debug: debug
   Release: release
 
+configFiles:
+  Debug: Config/AppConfig.xcconfig
+  Release: Config/AppConfig.xcconfig
+
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -40,6 +44,9 @@ packages:
     path: Packages/GotTimeCore
   GotTimeMocks:
     path: Packages/GotTimeMocks
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
 
 targets:
   GotTime:
@@ -51,13 +58,22 @@ targets:
     dependencies:
       - package: GotTimeCore
       - package: GotTimeMocks
+      - package: Supabase
+        product: Supabase
+    entitlements:
+      path: Config/GotTime.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_NAME: GotTime
         PRODUCT_BUNDLE_IDENTIFIER: com.stevenkinney.gottime
-        # Placeholder bundle ID — finalized against whatever App ID gets registered in the
-        # Apple Developer portal at Phase 2 (see DECISIONS.md). One line to change; nothing
-        # else in the codebase references it.
+        # Matches the App ID being registered in the Apple Developer portal for Phase 2 with
+        # Sign in with Apple enabled (see DECISIONS.md/BUILD_STATUS.md) — one line to change
+        # here if that registration ever needs a different bundle ID.
+        INFOPLIST_KEY_GTSupabaseProjectRef: "$(GT_SUPABASE_PROJECT_REF)"
+        INFOPLIST_KEY_GTSupabaseAnonKey: "$(GT_SUPABASE_ANON_KEY)"
 
   GotTimeUITests:
     type: bundle.ui-testing

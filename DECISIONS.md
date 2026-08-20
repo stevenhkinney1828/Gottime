@@ -520,3 +520,72 @@ mechanism all fail in byte-for-byte identical ways, that repetition is itself th
 means the mechanism being adjusted isn't where the bug lives, even when each individual fix is
 well-reasoned. The break came from questioning whether `.fullScreenCover` should be used at all,
 not from a better theory about how to use it.
+
+## Phase 2: real Supabase wiring
+
+**Client-safe config is committed directly, not gitignored.** `ios/Config/AppConfig.xcconfig`
+holds the real `SUPABASE_PROJECT_REF` and the "publishable" (formerly "anon") key in plaintext,
+checked into git. This looks wrong at first glance next to `.env`'s gitignored secrets, but the
+two values here are categorically different from `SUPABASE_SERVICE_ROLE_KEY`: Supabase's own
+dashboard labels the publishable key safe to share publicly, and the real security boundary is
+Row Level Security on the database (every migration since Phase 0), not keeping this value
+hidden — a shipped `.ipa` embeds it either way, so gitignoring it would only hide it from the
+repo, not from anyone who actually has the app. The service_role/secret key never appears
+anywhere under `ios/` — it stays in the root `.env` and, later, GitHub Actions secrets.
+
+**Stored as a bare project ref, not a full `https://` URL.** xcconfig treats `//` as a comment
+marker even inside a quoted value, which would silently truncate a URL value at the scheme.
+`SupabaseClientFactory` builds the full URL from the ref at runtime instead of storing one
+pre-built — sidesteps the escaping question entirely rather than fighting it.
+
+**Mock by default in Debug, always-live in Release** (`GotTimeApp.swift`). The owner has no
+Mac/Xcode and will only ever receive this app via TestFlight, which builds the Release
+configuration — a scheme-level environment-variable override (the first design considered)
+would never be reachable from a real install, silently leaving a shipped build talking to fake
+data forever. Release always uses `.live()`; Debug (what `ios-ci.yml`'s Simulator job and
+GotTimeUITests run) defaults to `.mock()` so the now-passing canonical-flow test and Xcode
+Previews are untouched, with `GOTTIME_USE_LIVE_BACKEND=1` as a scheme opt-in for manual testing
+once Xcode is available to someone.
+
+**`AppEnvironment.live()` mixes real auth with still-mocked everything else.** Only
+`authService` graduates to `SupabaseAuthAdapter` this phase; `connectionService`/`voiceService`/
+`callHistoryService`/`pushService` still come from a fresh `MockEnvironment()`. Each service
+graduates independently as its own phase lands (Phase 3 connections, Phase 4 voice, Phase 5
+push) — `AppEnvironment`'s five-service shape means this was always the expected incremental
+path, not a stopgap.
+
+**`Supabase` umbrella SPM product, not the standalone `Auth` library.** Phase 3 needs
+`PostgREST` within the next phase or two for the same client instance (querying
+`connections`/`profiles` directly), and the umbrella product's single shared `SupabaseClient` is
+the actually-idiomatic way to use this SDK — separate standalone clients per capability are
+meant for dependency-footprint-critical consumers, which this app isn't. Pulling in the fuller
+product now avoids a near-term second `project.yml` edit for the same package.
+
+**Every Supabase Swift SDK method signature used here was checked against the actual v2.55.1
+source on GitHub before writing code that calls it** (`gh api repos/supabase/supabase-swift/...`
+against `Sources/Auth/`, `Sources/PostgREST/`, `Sources/Functions/`), not written from
+recollection — a wrong method name or parameter label would only surface after a full CI round
+trip, the same expensive feedback loop the whole debugging session above just went through for a
+different reason. Confirmed: `SupabaseClient(supabaseURL:supabaseKey:)`,
+`auth.signInWithIdToken(credentials: OpenIDConnectCredentials)`, `auth.authStateChanges`
+(`AsyncStream<(event: AuthChangeEvent, session: Session?)>`), `from(_:).select().eq().single()
+.execute().value` (PostgREST), `functions.invoke(_:)`. Also confirmed the package's own minimum
+platforms (iOS 16/macOS 13, both below this project's iOS 17/macOS 14 floors) and
+swift-tools-version (6.1, comfortably under the CI runner's Xcode 26.6).
+
+**`SupabaseAuthAdapter` re-fetches the `profiles` row on every auth-state transition** rather
+than trusting the name Apple/Supabase cache in session or user metadata — `profiles.first_name`
+is this app's single source of truth (mutable via `updateFirstName`), and metadata would go
+stale the first time that's called. Apple only ever supplies the user's given name on the very
+first authorization for a given Apple ID, never again on subsequent sign-ins, so
+`signInWithApple()` writes it into `profiles` immediately when present, as a more reliable path
+than depending solely on `handle_new_user()`'s trigger-time read of `raw_user_meta_data` (0001)
+surviving the id-token exchange.
+
+**Account deletion needed a new Edge Function, not just an adapter method** — deleting an
+`auth.users` row is admin/service-role-only, something the client's own key structurally cannot
+do under RLS. Added `supabase/functions/delete-account/` following the same
+dependency-injected-logic-plus-thin-HTTP-wrapper pattern as `request-call`/`call-action`
+(`logic.ts` takes the acting user's *own* verified ID, never a client-supplied one, so this can
+only ever delete the account making the request) — tested locally (`deno test`/`lint`/`fmt`, all
+clean) the same way those were before ever depending on a live project.

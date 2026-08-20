@@ -4,6 +4,7 @@
 # iOS / Xcode (project.yml is source of truth; the generated project is never committed)
 ios/*.xcodeproj/
 ios/*.xcworkspace/
+ios/Config/*.entitlements
 ios/DerivedData/
 ios/.build/
 ios/**/.build/
