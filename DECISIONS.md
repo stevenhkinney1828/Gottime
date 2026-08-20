@@ -391,3 +391,29 @@ Also swapped the `.font(.system(size: 6))` for `.caption2` — 6pt is small enou
 degenerate/zero layout frame excluding it from the accessibility tree was a real possibility,
 and there's no reason to leave that variable in place while it's still unclear which side of
 this the bug is on.
+
+**Follow-up #5, same day:** the sanity check landed cleanly — `gtDebugState` exists right after
+the People list first renders (proving the diagnostic element itself works), then goes missing
+1.5s after confirming the call, alongside the already-known absence of both the duration
+picker's and the active-call screen's text. Something makes the *entire* accessibility-visible
+content disappear at that moment, foreground and background alike, without any of the expected
+replacement content ever showing either. That pattern — plus "Unable to monitor animations"
+appearing at that exact instant in every single run so far — reads much more like a presentation
+*transition* that starts and never completes, than like a state update that silently fails.
+
+That pointed back at something flagged as a real possibility during Follow-up #1 but never
+actually tested: two `.fullScreenCover(item:)` modifiers chained on the same view (one for
+incoming, one for active). Apple's docs suggest independent sheet/cover modifiers on one view
+should coordinate fine, but this is a documented rough edge in practice, and — independent of
+whether it's the actual cause here — modeling "at most one of {incoming, active} presented at
+once" as two separately-toggleable optionals was never the most accurate representation of that
+invariant anyway. Consolidated into a single `CallPresentation` enum
+(`CallCoordinator.swift`, `.incoming`/`.active` cases) and a single `coordinator.presentation`
+computed property, so `ContentView` now drives exactly one `.fullScreenCover(item:)` instead of
+two. The dismiss handler switches on the *captured* pre-dismiss value (not the new, by-then-nil
+one) to decide whether to call `declineIncomingCall()` or `dismissActiveCall()` — same pattern as
+the existing local-`let`-capture fix from Follow-up #1, applied consistently.
+
+Left every temporary diagnostic (print tracing, `gtDebugState`, the early sanity check) in place
+for this push rather than cleaning up preemptively — if this doesn't fix it, the next failure
+log needs them intact rather than starting the evidence-gathering over a third time.

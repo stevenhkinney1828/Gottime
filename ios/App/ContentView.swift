@@ -49,13 +49,12 @@ struct ContentView: View {
     @ViewBuilder
     private func signedInGate(coordinator: CallCoordinator) -> some View {
         // Read directly here, textually within this function's body computation, rather than
-        // only inside the Bindings' get closures below. @Observable's dependency tracking is
+        // only inside the Binding's get closure below. @Observable's dependency tracking is
         // keyed to property reads that happen during a tracked body computation; a read that
         // only ever happens indirectly, inside a closure invoked later by a framework
         // modifier's own internal machinery, is not guaranteed to register the same way. This
-        // capture is what actually guarantees signedInGate re-runs when either changes.
-        let activePresentation = coordinator.activeCallPresentation
-        let incomingPresentation = coordinator.incomingCallPresentation
+        // capture is what actually guarantees signedInGate re-runs when it changes.
+        let presentation = coordinator.presentation
 
         Group {
             switch authState {
@@ -68,21 +67,25 @@ struct ContentView: View {
             }
         }
         .environment(coordinator)
+        // A single cover for both incoming/active, not two chained `.fullScreenCover`
+        // modifiers — see the CallPresentation doc comment in CallCoordinator.swift.
         .fullScreenCover(item: Binding(
-            get: { incomingPresentation },
+            get: { presentation },
             set: { newValue in
-                if newValue == nil { Task { await coordinator.declineIncomingCall() } }
+                guard newValue == nil else { return }
+                switch presentation {
+                case .incoming: Task { await coordinator.declineIncomingCall() }
+                case .active: coordinator.dismissActiveCall()
+                case nil: break
+                }
             }
-        )) { presentation in
-            IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
-        }
-        .fullScreenCover(item: Binding(
-            get: { activePresentation },
-            set: { newValue in
-                if newValue == nil { coordinator.dismissActiveCall() }
+        )) { item in
+            switch item {
+            case .incoming(let presentation):
+                IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
+            case .active(let presentation):
+                ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
             }
-        )) { presentation in
-            ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
         }
     }
 }

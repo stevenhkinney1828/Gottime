@@ -19,6 +19,25 @@ struct IncomingCallPresentation: Identifiable {
     var id: UUID { session.id }
 }
 
+/// Single combined presentation state, replacing two independent `.fullScreenCover(item:)`
+/// modifiers that were previously chained on the same view (one for incoming, one for active).
+/// That was never provably the cause of the active-call screen failing to appear (see
+/// DECISIONS.md follow-ups), but it's a real, if lesser-known, SwiftUI rough edge — multiple
+/// same-kind presentation modifiers stacked on one view aren't guaranteed to coordinate
+/// cleanly — and modeling it as one value is also just a more accurate reflection of the real
+/// invariant: incoming and active are mutually exclusive, never both showing at once.
+enum CallPresentation: Identifiable {
+    case incoming(IncomingCallPresentation)
+    case active(ActiveCallPresentation)
+
+    var id: UUID {
+        switch self {
+        case .incoming(let presentation): return presentation.id
+        case .active(let presentation): return presentation.id
+        }
+    }
+}
+
 /// Centralizes call-state logic per spec section 14, rather than scattering it across
 /// SwiftUI views. Owns the VoiceService event subscription for the app's lifetime and
 /// exposes the two things views actually need: `incomingCall` (drives the incoming-call
@@ -75,6 +94,15 @@ final class CallCoordinator {
     var incomingCallPresentation: IncomingCallPresentation? {
         guard let incomingCall else { return nil }
         return IncomingCallPresentation(session: incomingCall.session, callerProfile: incomingCall.callerProfile)
+    }
+
+    /// Incoming takes priority in the (currently impossible, but not enforced anywhere) case
+    /// both are somehow set at once — an incoming call ringing is a more time-sensitive thing
+    /// to show than a summary/countdown screen for a call already in progress.
+    var presentation: CallPresentation? {
+        if let incomingCallPresentation { return .incoming(incomingCallPresentation) }
+        if let activeCallPresentation { return .active(activeCallPresentation) }
+        return nil
     }
 
     // MARK: - Derived, always-fresh countdown state
