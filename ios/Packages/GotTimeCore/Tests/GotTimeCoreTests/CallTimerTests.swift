@@ -42,7 +42,13 @@ final class CallTimerTests: XCTestCase {
         let timer = CallTimer(connectedAt: connectedAt, requestedDurationSeconds: 600)
         let before = connectedAt.addingTimeInterval(-5)
         XCTAssertEqual(timer.elapsedSeconds(at: before), 0)
-        XCTAssertEqual(timer.remainingSeconds(at: before), 600)
+        // NOT 600: remainingSeconds has no special knowledge of connectedAt as a boundary —
+        // it's purely "how long until expiresAt from now," so 5 seconds before connectedAt,
+        // expiresAt is genuinely 605 seconds away (5 to reach connectedAt, then the full
+        // 600). Only elapsedSeconds clamps to the requested duration; remainingSeconds only
+        // clamps to non-negative. First CI run caught this — the original expectation here
+        // (600) was simply arithmetically wrong, not a real implementation bug.
+        XCTAssertEqual(timer.remainingSeconds(at: before), 605)
     }
 
     // MARK: - Rounding at second boundaries (no early-flicker, no late-hold)
