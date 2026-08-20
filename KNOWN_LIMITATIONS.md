@@ -23,6 +23,21 @@ see BETA_FEEDBACK.md (Phase 9+) for that.
   not even in a simulator. Visual verification happens via CI screenshot/XCUITest output and,
   from Phase 4 onward, real devices via TestFlight.
 
+## Tracked, non-blocking compiler warnings
+
+- **GotTimeMocks' `NSLock`-based services warn under Swift 6 language mode.** All five mock
+  services (MockAuthService, MockConnectionService, MockCallHistoryService, MockVoiceService)
+  call `NSLock.lock()`/`.unlock()` from inside `async` functions to guard their in-memory
+  state. This compiles and runs correctly today (the project deliberately targets Swift 5
+  language mode — see DECISIONS.md — specifically to avoid Swift 6's stricter concurrency
+  checking), but the compiler already warns that this becomes a hard error under Swift 6 mode:
+  "instance method 'lock' is unavailable from asynchronous contexts." Not an active bug — lock
+  hold times in these mocks are all short and never span an `await`, so there's no realistic
+  thread-pool-starvation risk in practice — but a real Swift 6 migration would need these
+  reworked (most naturally, converting the mocks to `actor`s instead of classes with manual
+  `NSLock`). Deferred rather than fixed now, since it doesn't block anything and isn't on the
+  current roadmap.
+
 ## Platform behavior pending real-device confirmation
 
 - **CallKit incoming-call presentation** (composing `"Name • N min"` into

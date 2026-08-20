@@ -23,8 +23,15 @@ final class CallCoordinator {
     private(set) var incomingCall: (session: CallSession, callerProfile: Profile)?
 
     private var tickTrigger: Date = .now
-    private var eventTask: Task<Void, Never>?
-    private var tickTask: Task<Void, Never>?
+    // nonisolated(unsafe): deinit always runs in a nonisolated context in Swift's concurrency
+    // model, even for a @MainActor class — deallocation can be triggered from any thread, so
+    // the compiler can't assume deinit runs on the actor the rest of this class is isolated
+    // to. That makes these two properties genuinely need nonisolated access from deinit. It's
+    // actually safe here: both are only ever written from MainActor-isolated code (init,
+    // startTicking, stopTicking), and deinit's nonisolated read happens only once, after every
+    // other reference to self is already gone — nothing MainActor-isolated can race with it.
+    nonisolated(unsafe) private var eventTask: Task<Void, Never>?
+    nonisolated(unsafe) private var tickTask: Task<Void, Never>?
 
     init(voiceService: any VoiceService) {
         self.voiceService = voiceService
