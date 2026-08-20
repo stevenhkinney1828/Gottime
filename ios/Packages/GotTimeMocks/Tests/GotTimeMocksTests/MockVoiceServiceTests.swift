@@ -78,7 +78,10 @@ final class MockVoiceServiceTests: XCTestCase {
             if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
-        XCTAssertEqual(statuses, [.ringing, .connected, .timedOut, .completed])
+        // .outgoing leads because startCall emits it synchronously before this test starts
+        // collecting — AsyncStream's default unbounded buffering means it's never lost, just
+        // delivered once collectEvents starts iterating.
+        XCTAssertEqual(statuses, [.outgoing, .ringing, .connected, .timedOut, .completed])
 
         let finalEntries = recordedEntries.get()
         XCTAssertEqual(finalEntries.count, 1, "onCallEnded must fire exactly once, not zero or twice")
@@ -175,7 +178,7 @@ final class MockVoiceServiceTests: XCTestCase {
             if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
-        XCTAssertEqual(statuses, [.ringing, .declined])
+        XCTAssertEqual(statuses, [.outgoing, .ringing, .declined])
     }
 
     func testAutoOutcomeMissed() async throws {
@@ -188,7 +191,7 @@ final class MockVoiceServiceTests: XCTestCase {
             if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
-        XCTAssertEqual(statuses, [.ringing, .missed])
+        XCTAssertEqual(statuses, [.outgoing, .ringing, .missed])
     }
 
     func testAutoOutcomeFailed() async throws {
@@ -201,7 +204,7 @@ final class MockVoiceServiceTests: XCTestCase {
             if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
-        XCTAssertEqual(statuses, [.ringing, .failed])
+        XCTAssertEqual(statuses, [.outgoing, .ringing, .failed])
     }
 
     func testMuteAndSpeakerDoNotThrow() async throws {
