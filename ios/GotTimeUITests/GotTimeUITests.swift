@@ -60,9 +60,17 @@ final class GotTimeUITests: XCTestCase {
             || app.staticTexts["Time remaining"].exists
         let durationPickerStillShowing = app.staticTexts["How long do you have?"].exists
         if !activeCallScreenAppeared {
+            // ContentView surfaces CallCoordinator's live state through this always-present,
+            // tiny accessibility element specifically because app-process print() output
+            // doesn't reliably reach the xcodebuild test log (confirmed: temporary trace prints
+            // added alongside this only ever showed up from the separate `swift test` package
+            // step, never from this UI-test step) — see DECISIONS.md.
+            let debugStateElement = app.staticTexts.matching(identifier: "gtDebugState").firstMatch
+            let debugStateValue = debugStateElement.exists ? debugStateElement.label : "<gtDebugState element not found>"
             XCTFail("""
             active-call screen never appeared 1.5s after confirming.
             Duration picker still on screen: \(durationPickerStillShowing)
+            CallCoordinator debug state: \(debugStateValue)
             Full accessibility tree at failure time:
             \(app.debugDescription)
             """)

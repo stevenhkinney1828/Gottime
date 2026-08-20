@@ -17,6 +17,18 @@ struct ContentView: View {
                 ProgressView()
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if let coordinator {
+                // Temporary diagnostic (see DECISIONS.md) — surfaces live CallCoordinator
+                // state through the same accessibility-query channel GotTimeUITests already
+                // uses successfully for everything else, since app-process print() output does
+                // not reliably show up in the xcodebuild test log the way `swift test` output
+                // does. Remove once the active-call-presentation bug is found and fixed.
+                Text(debugStateLabel(coordinator))
+                    .font(.system(size: 6))
+                    .accessibilityIdentifier("gtDebugState")
+            }
+        }
         .task {
             if coordinator == nil {
                 coordinator = CallCoordinator(voiceService: environment.voiceService)
@@ -25,6 +37,13 @@ struct ContentView: View {
                 authState = state
             }
         }
+    }
+
+    private func debugStateLabel(_ coordinator: CallCoordinator) -> String {
+        let active = coordinator.activeCall.map { "\($0.status)" } ?? "nil"
+        let incoming = coordinator.incomingCall != nil ? "SET" : "nil"
+        let presentation = coordinator.activeCallPresentation != nil ? "SET" : "nil"
+        return "gtDebug active=\(active) incoming=\(incoming) presentation=\(presentation)"
     }
 
     @ViewBuilder

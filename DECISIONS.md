@@ -342,3 +342,29 @@ exactly which of these actually run and which never fire, replacing another roun
 hypothesis-and-fix with direct evidence of where execution actually stops. These print
 statements are temporary and should be removed once the root cause is confirmed and fixed — do
 not mistake them for permanent logging (Phase 7 adds real structured logging).
+
+**Follow-up #3, same day:** the print-tracing run revealed a different problem before it could
+answer the original question: none of the four trace points ever appeared in the "Build and
+test app + UI tests" step's log at all. They *did* appear — 46 times, clearly from the separate
+"Test GotTimeMocks package" step's own `swift test` run (MockVoiceServiceTests calling
+`startCall` directly, many times, each a few microseconds apart) — proving the prints work and
+the log capture works in general. But zero copies came from the UI-test step specifically. Since
+`swift test` runs as a plain foreground process (stdout trivially inherited by the CI step)
+while `xcodebuild test` launches the app as a separate Simulator process whose stdout capture
+depends on Xcode's own test-harness plumbing, this is most likely a genuine blind spot — app
+stdout from *inside the Simulator* isn't reliably reaching this log — rather than proof
+`confirmCall()` never runs. Treated as inconclusive, not as a finding.
+
+Rather than chase the logging mechanism further, switched to a diagnostic channel already
+proven end-to-end for exactly this scenario: XCUITest's own element queries, which every passing
+assertion in this suite already depends on. Added a tiny always-present accessibility element
+(`gtDebugState`, identifier-matched) via `.overlay` on `ContentView`'s root, showing
+`CallCoordinator`'s live `activeCall`/`incomingCall`/`activeCallPresentation` state as plain
+text — independent of whether any sheet or cover is presented, since it lives outside
+`signedInGate`'s hierarchy. `GotTimeUITests` now reads its `.label` into the failure message.
+This should give a direct answer: if `active=nil` at failure time, the bug is upstream (the tap
+not registering, or something in the call chain not completing); if `active=connected` (or any
+non-nil status) but the cover still isn't showing, the bug is purely in the
+`.fullScreenCover(item:)` presentation mechanics, and the print statements + this reasoning about
+log capture becomes a documented dead end, not wasted — it rules out an entire class of
+hypothesis (async/lock hangs) with actual evidence rather than more reading-the-code guessing.
