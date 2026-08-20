@@ -15,7 +15,6 @@ struct DurationPickerView: View {
     @State private var customText: String = ""
     @State private var isCustomSelected = false
     @State private var validationMessage: String?
-    @State private var isStartingCall = false
 
     private var resolvedMinutes: Int? {
         if isCustomSelected {
@@ -53,9 +52,9 @@ struct DurationPickerView: View {
 
             PrimaryButton(
                 title: confirmTitle,
-                isDisabled: resolvedMinutes == nil || isStartingCall
+                isDisabled: resolvedMinutes == nil
             ) {
-                Task { await confirmCall() }
+                confirmCall()
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
@@ -132,11 +131,17 @@ struct DurationPickerView: View {
         }
     }
 
-    private func confirmCall() async {
+    /// Dismisses immediately, then starts the call in the background — deliberately in that
+    /// order, not the reverse. Awaiting the call first and dismissing after would mean the
+    /// sheet's dismiss-animation and ContentView's active-call fullScreenCover-present could
+    /// both kick off at nearly the same instant; dismissing first gives one clean sequential
+    /// transition (sheet fully closes, then the call screen appears) instead of two
+    /// overlapping ones.
+    private func confirmCall() {
         guard let minutes = resolvedMinutes else { return }
-        isStartingCall = true
-        await coordinator.call(person, durationSeconds: DurationPolicy.seconds(forMinutes: minutes))
-        isStartingCall = false
         dismiss()
+        Task {
+            await coordinator.call(person, durationSeconds: DurationPolicy.seconds(forMinutes: minutes))
+        }
     }
 }

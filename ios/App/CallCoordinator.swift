@@ -2,6 +2,23 @@ import Foundation
 import Observation
 import GotTimeCore
 
+/// Identifiable wrappers purely for driving `.fullScreenCover(item:)`, which is the robust
+/// SwiftUI presentation pattern here — `.fullScreenCover(isPresented: .constant(...))` was
+/// tried first and is a known footgun: `.constant()`'s setter is a no-op, and SwiftUI's
+/// presentation coordinator sometimes needs to write back to the binding, silently desyncing
+/// it from the real state. `.fullScreenCover(item:)` takes a real two-way binding instead.
+struct ActiveCallPresentation: Identifiable {
+    let session: CallSession
+    let otherPerson: Profile
+    var id: UUID { session.id }
+}
+
+struct IncomingCallPresentation: Identifiable {
+    let session: CallSession
+    let callerProfile: Profile
+    var id: UUID { session.id }
+}
+
 /// Centralizes call-state logic per spec section 14, rather than scattering it across
 /// SwiftUI views. Owns the VoiceService event subscription for the app's lifetime and
 /// exposes the two things views actually need: `incomingCall` (drives the incoming-call
@@ -46,6 +63,18 @@ final class CallCoordinator {
     deinit {
         eventTask?.cancel()
         tickTask?.cancel()
+    }
+
+    // MARK: - Presentation wrappers (see the type-level doc comments above)
+
+    var activeCallPresentation: ActiveCallPresentation? {
+        guard let activeCall, let activeCallOtherPerson else { return nil }
+        return ActiveCallPresentation(session: activeCall, otherPerson: activeCallOtherPerson)
+    }
+
+    var incomingCallPresentation: IncomingCallPresentation? {
+        guard let incomingCall else { return nil }
+        return IncomingCallPresentation(session: incomingCall.session, callerProfile: incomingCall.callerProfile)
     }
 
     // MARK: - Derived, always-fresh countdown state

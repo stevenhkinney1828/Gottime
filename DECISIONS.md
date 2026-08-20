@@ -268,3 +268,35 @@ real cost to it being higher than strictly necessary.
 **Lesson for future packages:** any new pure-Swift package added to this repo that gets tested
 via a direct `swift test` step in CI needs the same `.macOS(...)` entry from the start, not
 just whatever platform it actually ships on.
+
+---
+
+## 2026-08-20 — fullScreenCover(item:) instead of fullScreenCover(isPresented: .constant(...))
+
+**Decision:** ContentView presents IncomingCallView/ActiveCallView via `.fullScreenCover(item:)`
+bound to real `Binding<...Presentation?>` values (see `ActiveCallPresentation`/
+`IncomingCallPresentation` in CallCoordinator.swift), not `.fullScreenCover(isPresented:)` bound
+to `.constant(coordinator.activeCall != nil)`, which is what this shipped as through the first
+several CI iterations.
+
+**Why:** The first real end-to-end CI run that got as far as actually executing
+GotTimeUITests's canonical-flow test failed at exactly the point of confirming a call — the
+active-call screen never appeared within an 8-second window, even though every isolated piece
+(the coordinator's state updates, MockVoiceService's event emission) was independently correct
+and tested. `.constant()` bindings have a no-op setter; SwiftUI's presentation coordinator for
+`.fullScreenCover`/`.sheet` sometimes needs to write back to the binding it's given as part of
+its own internal state tracking, and a no-op setter means that write silently goes nowhere,
+which can desync the modifier's internal presented/dismissed state from the app's actual state
+in a way that doesn't reliably self-correct. `.fullScreenCover(item:)` takes a real two-way
+`Binding<Item?>`, avoiding this class of bug entirely.
+
+While addressing this, also reordered DurationPickerView's confirm action to call `dismiss()`
+first and start the call in a background Task second (previously the reverse) — not confirmed
+as a distinct root cause, but removes a second plausible contributor (two presentation
+transitions, a sheet dismissing and a fullScreenCover appearing, kicking off at nearly the same
+instant) rather than leaving it as a live risk once the primary cause was already identified.
+
+**Lesson for future views:** default to `.sheet(item:)`/`.fullScreenCover(item:)` with a real
+binding for anything driven by observable model state; reach for `isPresented: .constant(...)`
+only for content that's genuinely never dismissed programmatically from outside the view being
+presented.

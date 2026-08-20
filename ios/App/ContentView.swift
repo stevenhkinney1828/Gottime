@@ -40,16 +40,33 @@ struct ContentView: View {
             }
         }
         .environment(coordinator)
-        .fullScreenCover(isPresented: .constant(coordinator.incomingCall != nil)) {
-            if let incoming = coordinator.incomingCall {
-                IncomingCallView(session: incoming.session, callerProfile: incoming.callerProfile)
-            }
+        .fullScreenCover(item: incomingCallBinding(coordinator)) { presentation in
+            IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
         }
-        .fullScreenCover(isPresented: .constant(coordinator.activeCall != nil)) {
-            if let activeCall = coordinator.activeCall, let otherPerson = coordinator.activeCallOtherPerson {
-                ActiveCallView(session: activeCall, otherPerson: otherPerson)
-            }
+        .fullScreenCover(item: activeCallBinding(coordinator)) { presentation in
+            ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
         }
+    }
+
+    /// Real two-way bindings, not `.constant()` — see the doc comment on
+    /// ActiveCallPresentation/IncomingCallPresentation in CallCoordinator.swift for why that
+    /// distinction matters here specifically.
+    private func activeCallBinding(_ coordinator: CallCoordinator) -> Binding<ActiveCallPresentation?> {
+        Binding(
+            get: { coordinator.activeCallPresentation },
+            set: { newValue in
+                if newValue == nil { coordinator.dismissActiveCall() }
+            }
+        )
+    }
+
+    private func incomingCallBinding(_ coordinator: CallCoordinator) -> Binding<IncomingCallPresentation?> {
+        Binding(
+            get: { coordinator.incomingCallPresentation },
+            set: { newValue in
+                if newValue == nil { Task { await coordinator.declineIncomingCall() } }
+            }
+        )
     }
 }
 
