@@ -11,9 +11,11 @@ public enum VoiceEvent: Equatable, Sendable {
     /// + requested duration before answering (spec section 6).
     case incomingCall(session: CallSession, callerProfile: Profile)
 
-    /// The named call transitioned to a new status at a specific, authoritative timestamp.
-    /// `connected` is the only status that starts the timer — see CallTimer.
-    case statusChanged(callUUID: UUID, status: CallStatus, at: Date)
+    /// The call transitioned to a new status. Carries the full session (not just the status)
+    /// so a consumer never needs a separate "fetch current session" query to know
+    /// `connectedAt`/`ringingAt`/etc. — `connected_at` being set is what starts the timer,
+    /// see CallTimer.
+    case statusChanged(session: CallSession)
 
     /// The underlying voice connection is fully torn down (CallKit cleaned up, Twilio call
     /// ended). Always follows a terminal `statusChanged` event; exists as its own case

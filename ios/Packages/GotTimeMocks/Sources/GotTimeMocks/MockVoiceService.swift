@@ -190,7 +190,7 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
     }
 
     private func emitStatusChanged(_ session: CallSession) {
-        continuation.yield(.statusChanged(callUUID: session.callUUID, status: session.status, at: session.updatedAt))
+        continuation.yield(.statusChanged(session: session))
     }
 
     /// The single choke point every transition goes through — see the type-level doc comment

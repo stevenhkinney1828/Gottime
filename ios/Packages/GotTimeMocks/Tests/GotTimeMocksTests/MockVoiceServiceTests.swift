@@ -75,7 +75,7 @@ final class MockVoiceServiceTests: XCTestCase {
         let events = await collectEvents(from: service.events, until: hasCallEnded)
 
         let statuses: [CallStatus] = events.compactMap {
-            if case .statusChanged(let callUUID, let status, _) = $0, callUUID == session.callUUID { return status }
+            if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
         XCTAssertEqual(statuses, [.ringing, .connected, .timedOut, .completed])
@@ -172,7 +172,7 @@ final class MockVoiceServiceTests: XCTestCase {
 
         let events = await collectEvents(from: service.events, until: hasCallEnded)
         let statuses: [CallStatus] = events.compactMap {
-            if case .statusChanged(let callUUID, let status, _) = $0, callUUID == session.callUUID { return status }
+            if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
         XCTAssertEqual(statuses, [.ringing, .declined])
@@ -185,7 +185,7 @@ final class MockVoiceServiceTests: XCTestCase {
 
         let events = await collectEvents(from: service.events, until: hasCallEnded)
         let statuses: [CallStatus] = events.compactMap {
-            if case .statusChanged(let callUUID, let status, _) = $0, callUUID == session.callUUID { return status }
+            if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
         XCTAssertEqual(statuses, [.ringing, .missed])
@@ -198,7 +198,7 @@ final class MockVoiceServiceTests: XCTestCase {
 
         let events = await collectEvents(from: service.events, until: hasCallEnded)
         let statuses: [CallStatus] = events.compactMap {
-            if case .statusChanged(let callUUID, let status, _) = $0, callUUID == session.callUUID { return status }
+            if case .statusChanged(let s) = $0, s.callUUID == session.callUUID { return s.status }
             return nil
         }
         XCTAssertEqual(statuses, [.ringing, .failed])

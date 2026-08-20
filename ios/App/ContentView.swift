@@ -1,18 +1,55 @@
 import SwiftUI
+import GotTimeCore
 
-/// Placeholder root view for Phase 0. Replaced in Phase 1 by the real People list — see
-/// BUILD_STATUS.md. Exists so the App target has something to compile and launch against,
-/// proving the project/package wiring works before any feature code is written.
+/// App root: resolves auth state, hosts onboarding vs. the main experience, and presents
+/// incoming/active calls as full-screen covers driven entirely by CallCoordinator's
+/// observable state — no view below this one reaches into VoiceService directly.
 struct ContentView: View {
+    @Environment(\.appEnvironment) private var environment
+    @State private var coordinator: CallCoordinator?
+    @State private var authState: AuthState = .signedOut
+
     var body: some View {
-        VStack(spacing: 12) {
-            Text("GotTime?")
-                .font(.largeTitle.bold())
-            Text("Foundation phase — screens land in Phase 1.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        Group {
+            if let coordinator {
+                signedInGate(coordinator: coordinator)
+            } else {
+                ProgressView()
+            }
         }
-        .padding()
+        .task {
+            if coordinator == nil {
+                coordinator = CallCoordinator(voiceService: environment.voiceService)
+            }
+            for await state in environment.authService.authStateStream {
+                authState = state
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func signedInGate(coordinator: CallCoordinator) -> some View {
+        Group {
+            switch authState {
+            case .signedOut:
+                SignedOutView()
+            case .signedIn(let profile) where !profile.hasCompletedOnboarding:
+                OnboardingView(profile: profile)
+            case .signedIn:
+                MainView()
+            }
+        }
+        .environment(coordinator)
+        .fullScreenCover(isPresented: .constant(coordinator.incomingCall != nil)) {
+            if let incoming = coordinator.incomingCall {
+                IncomingCallView(session: incoming.session, callerProfile: incoming.callerProfile)
+            }
+        }
+        .fullScreenCover(isPresented: .constant(coordinator.activeCall != nil)) {
+            if let activeCall = coordinator.activeCall, let otherPerson = coordinator.activeCallOtherPerson {
+                ActiveCallView(session: activeCall, otherPerson: otherPerson)
+            }
+        }
     }
 }
 
