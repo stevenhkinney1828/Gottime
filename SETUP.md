@@ -21,19 +21,69 @@ Each item below only gets asked for once the project actually reaches that stage
 before. If you see a request that isn't on this list, or is out of order, ask about it.
 
 ### 1. A GitHub account and one empty repository
-**Status: done — you already had a GitHub account.**
-This is where the code lives and where the "cloud Mac" builds run from.
+**Status: you already had the account — the empty repository is the one thing still needed.**
+This is where the code lives and where the "cloud Mac" builds run from. To create it:
 
-### 2. A Supabase project **(not yet needed)**
+1. Go to github.com and sign in.
+2. Click the **+** in the top-right corner → **New repository**.
+3. Name it anything (e.g. `gottime`). Leave it **empty** — don't check "Add a README" or
+   "Add .gitignore," since there's already a project ready to fill it.
+4. Click **Create repository**.
+5. Tell Claude Code the repository's URL (it'll look like `https://github.com/yourname/gottime`).
+
+Claude Code will also need a way to actually push code there. The simplest way: create a
+**fine-grained personal access token** scoped to just that one repository —
+
+1. On GitHub: click your profile picture → **Settings** → scroll down to **Developer
+   settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
+2. Give it a name, set **Repository access** to "Only select repositories" and pick the one
+   you just made, and under **Permissions → Repository permissions**, set **Contents** to
+   **Read and write**. Leave everything else as-is.
+3. Generate it, copy the token (starts with `github_pat_...`), and paste it to Claude Code.
+
+This token can only touch that one repository, only to read/write files — not your account,
+not your other repos. You can revoke it anytime from that same Settings page. If you'd rather
+not create a token at all, that's fine too — just let Claude Code know when a batch of work is
+ready, and push it yourself with the two git commands it'll give you.
+
+### 2. A Supabase project **(coming up next)**
 Supabase is the free service that stores user accounts and app data (who's connected to
-whom, call history) securely. You'll create a free project and share three values with
-Claude Code (a URL and two keys). Takes about 10 minutes.
+whom, call history) securely.
+
+1. Go to supabase.com and sign up (or sign in).
+2. Click **New project**. Pick any organization/name (e.g. "gottime"), set a database
+   password (Supabase generates one for you if you'd rather not choose — either way, save it
+   somewhere, but you won't need to type it day-to-day), and pick a region close to you.
+3. Wait a minute or two for it to finish setting up.
+4. Go to **Project Settings** (gear icon) → **API**. You'll see a **Project URL** and two
+   keys: **anon / public** and **service_role**.
+5. Share all three (URL, anon key, service_role key) with Claude Code.
+
+The service_role key is powerful — it can read/write everything in the database, bypassing
+the normal security rules. It never goes in the iPhone app itself, only into Supabase's own
+secure server-side config. Treat it like a password: share it with Claude Code once, don't
+post it anywhere public.
 
 ### 3. Apple Developer Program enrollment
 **Status: done — you already have this.**
 This is what allows apps to be installed on real iPhones and eventually distributed via
-TestFlight. When we reach the authentication stage, you'll do a few clicks inside your
-existing account to set up "Sign in with Apple" — not a new enrollment.
+TestFlight.
+
+For Sign in with Apple specifically, two more things happen inside your existing account
+(not a new enrollment) once we reach that step:
+1. **Certificates, Identifiers & Profiles → Identifiers** — the app's own identifier (its
+   "bundle ID") needs the **Sign in with Apple** capability turned on. Claude Code will tell
+   you the exact identifier to find once it's registered one.
+2. **Certificates, Identifiers & Profiles → Keys** — a new key with **Sign in with Apple**
+   enabled, which produces a one-time-downloadable `.p8` file. Apple only lets you download
+   this once, so save it somewhere safe immediately (Claude Code will tell you exactly where
+   to put it). You'll also note down the **Key ID** and your **Team ID** (visible on the same
+   page/your account's Membership details) — both get shared with Claude Code alongside the
+   key file.
+
+These exact steps are common but occasionally Apple tweaks their portal's layout — if
+anything looks different from this description when we get there, just describe what you see
+and Claude Code will help you find the right button.
 
 ### 4. A Twilio account **(not yet needed)**
 Twilio is the service that actually carries the voice call audio between the two phones.
