@@ -6,10 +6,20 @@ import GotTimeCore
 /// calling that person especially fast."
 struct PeopleListView: View {
     @Environment(\.appEnvironment) private var environment
+    @Environment(CallCoordinator.self) private var coordinator
     @State private var people: [ConnectedPerson] = []
     @State private var isLoading = true
     @State private var selectedPerson: ConnectedPerson?
     @State private var showingAddConnection = false
+    /// Set by DurationPickerView's onConfirm, consumed by the sheet's onDismiss — see the doc
+    /// comment on DurationPickerView.confirmCall() for why the call starts here, only once the
+    /// sheet has actually finished dismissing, rather than from inside the sheet itself.
+    @State private var pendingCall: PendingCall?
+
+    private struct PendingCall {
+        let person: ConnectedPerson
+        let durationSeconds: Int
+    }
 
     var body: some View {
         Group {
@@ -34,9 +44,15 @@ struct PeopleListView: View {
                 .accessibilityLabel("Add a connection")
             }
         }
-        .sheet(item: $selectedPerson) { person in
+        .sheet(item: $selectedPerson, onDismiss: {
+            guard let pendingCall else { return }
+            self.pendingCall = nil
+            Task { await coordinator.call(pendingCall.person, durationSeconds: pendingCall.durationSeconds) }
+        }) { person in
             NavigationStack {
-                DurationPickerView(person: person)
+                DurationPickerView(person: person) { durationSeconds in
+                    pendingCall = PendingCall(person: person, durationSeconds: durationSeconds)
+                }
             }
         }
         .sheet(isPresented: $showingAddConnection) {

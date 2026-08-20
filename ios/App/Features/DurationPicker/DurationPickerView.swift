@@ -6,9 +6,11 @@ import GotTimeCore
 /// calls CallCoordinator.call(_:durationSeconds:).
 struct DurationPickerView: View {
     let person: ConnectedPerson
+    /// Reports the confirmed duration up to whichever view presents this sheet, rather than
+    /// starting the call directly from here — see the doc comment on `confirmCall()` for why.
+    let onConfirm: (Int) -> Void
 
     @Environment(\.appEnvironment) private var environment
-    @Environment(CallCoordinator.self) private var coordinator
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedMinutes: Int?
@@ -131,21 +133,20 @@ struct DurationPickerView: View {
         }
     }
 
-    /// Dismisses immediately, then starts the call in the background — deliberately in that
-    /// order, not the reverse. Awaiting the call first and dismissing after would mean the
-    /// sheet's dismiss-animation and ContentView's active-call fullScreenCover-present could
-    /// both kick off at nearly the same instant; dismissing first gives one clean sequential
-    /// transition (sheet fully closes, then the call screen appears) instead of two
-    /// overlapping ones.
+    /// Reports the confirmed duration via `onConfirm`, then dismisses — deliberately *not*
+    /// calling `CallCoordinator.call()` directly from here. `MockVoiceService.startCall` has no
+    /// real `await` suspension point in its body, so `Task { await coordinator.call(...) }` can
+    /// run to completion on the very next run-loop turn — often before this sheet's own dismiss
+    /// animation has actually finished, not just been requested. That raced the sheet's dismiss
+    /// transition against the active-call screen's present transition and was the actual cause
+    /// of GotTimeUITests' canonical flow test failing (see DECISIONS.md) — not any particular
+    /// choice of presentation API, which is why switching between `.fullScreenCover(item:)`
+    /// variants never fixed it. `onConfirm` only records the pending call; the presenting view
+    /// (`PeopleListView`) is what actually starts it, from the sheet's `onDismiss` callback,
+    /// which SwiftUI guarantees fires only once the dismissal has genuinely completed.
     private func confirmCall() {
         guard let minutes = resolvedMinutes else { return }
-        print("[GotTime DEBUG] confirmCall: entry, minutes=\(minutes)")
+        onConfirm(DurationPolicy.seconds(forMinutes: minutes))
         dismiss()
-        print("[GotTime DEBUG] confirmCall: dismiss() called, spawning Task")
-        Task {
-            print("[GotTime DEBUG] confirmCall Task: about to await coordinator.call")
-            await coordinator.call(person, durationSeconds: DurationPolicy.seconds(forMinutes: minutes))
-            print("[GotTime DEBUG] confirmCall Task: coordinator.call returned")
-        }
     }
 }

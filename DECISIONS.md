@@ -417,3 +417,32 @@ the existing local-`let`-capture fix from Follow-up #1, applied consistently.
 Left every temporary diagnostic (print tracing, `gtDebugState`, the early sanity check) in place
 for this push rather than cleaning up preemptively — if this doesn't fix it, the next failure
 log needs them intact rather than starting the evidence-gathering over a third time.
+
+**Follow-up #6, same day:** the consolidated single-cover fix (#5) failed identically —
+`gtDebugState` still not found, same empty `debugDescription`. Three different presentation-API
+shapes (`isPresented: .constant`, two chained `.fullScreenCover(item:)`, one consolidated
+`.fullScreenCover(item:)`) now all fail the exact same way, which means the bug was never about
+*which* presentation API or binding pattern is used — that entire line of investigation was
+looking in the wrong place.
+
+Re-examined the actual sequencing instead. `DurationPickerView.confirmCall()` calls `dismiss()`
+then spawns `Task { await coordinator.call(...) }`. The intent (documented in the very comment
+this replaces) was for the sheet to fully close before the call starts. But `await` only
+actually suspends a Task if the callee hits a real suspension point, and
+`MockVoiceService.startCall`'s body has none — it's pure synchronous code (lock/unlock, struct
+construction, an `AsyncStream` yield, spawning-but-not-awaiting a child task) with no `await`
+anywhere in it. So `Task { await coordinator.call(...) }` can run to completion on the very next
+run-loop turn, which sets `activeCall` and flips `coordinator.presentation` to `.active(...)`
+often *before* the sheet's own dismiss animation has actually finished — not just been
+requested. That's a real race between the sheet's dismiss transition and the cover's present
+transition, and it explains why every presentation-API variant failed identically: none of them
+touched when the second transition starts relative to the first one completing.
+
+Restructured so starting the call is decoupled from confirming the duration.
+`DurationPickerView` no longer holds a `CallCoordinator` reference or calls `.call()` at all; it
+takes an `onConfirm: (Int) -> Void` closure, calls it with the resolved duration, then dismisses.
+`PeopleListView` (which presents `DurationPickerView` via `.sheet(item:)`) now holds the pending
+`(person, durationSeconds)` in `onConfirm`, and only starts `coordinator.call(...)` from that
+sheet's `onDismiss` callback — which SwiftUI guarantees fires once the dismissal has actually
+completed, not merely been requested. This removes the race structurally rather than papering
+over it with an arbitrary delay.
