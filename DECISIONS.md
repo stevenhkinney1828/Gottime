@@ -242,3 +242,29 @@ ambiguity to resolve directly and record, per the spec's own instruction. `cance
 reachable from `outgoing` or `ringing` (the caller backing out at either point), is terminal,
 and — like `declined`/`missed`/`failed` — never has a `connected_at`, so it's excluded from
 `CallStatus.wasEverConnected` the same way they are.
+
+---
+
+## 2026-08-20 — GotTimeCore/GotTimeMocks Package.swift needs `.macOS(...)` too
+
+**Decision:** Both packages' `platforms:` array now lists `.iOS(.v17), .macOS(.v14)`, not just
+`.iOS(.v17)`.
+
+**Why:** First real CI run (finally possible once the GitHub repo was connected) failed with
+`'AsyncStream' is only available in macOS 10.15 or newer` inside GotTimeCore — a package that
+only ships on iOS and has nothing to do with macOS. Root cause: `ios-ci.yml` runs `swift test`
+directly against each package (a fast way to test the pure-logic packages without going
+through the full Xcode project), and `swift test` executes natively on the CI runner's Mac,
+not iOS. With no `.macOS` entry in `platforms:`, SwiftPM fell back to an old default macOS
+deployment target that predates Swift Concurrency entirely, so `AsyncStream` (and everything
+else concurrency-related) failed to compile — a failure with nothing to do with the actual
+iOS deployment target, which was already correctly set to 17.0. `.v14` (not the `.v13` that
+would minimally cover `AsyncStream` itself) was chosen with margin to also safely cover
+`AsyncStream.makeStream()` and `Task.sleep(for:)`, whose exact availability floors weren't
+worth re-deriving precisely when a generous, harmless-to-set-too-high value was available —
+this setting only affects local/CI package testing, never the shipped iOS app, so there's no
+real cost to it being higher than strictly necessary.
+
+**Lesson for future packages:** any new pure-Swift package added to this repo that gets tested
+via a direct `swift test` step in CI needs the same `.macOS(...)` entry from the start, not
+just whatever platform it actually ships on.

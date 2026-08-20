@@ -3,7 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "GotTimeMocks",
-    platforms: [.iOS(.v17)],
+    // See the matching comment in GotTimeCore/Package.swift — same reason needed here.
+    platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         .library(name: "GotTimeMocks", targets: ["GotTimeMocks"])
     ],
