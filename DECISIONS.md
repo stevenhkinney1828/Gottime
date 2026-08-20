@@ -300,3 +300,18 @@ instant) rather than leaving it as a live risk once the primary cause was alread
 binding for anything driven by observable model state; reach for `isPresented: .constant(...)`
 only for content that's genuinely never dismissed programmatically from outside the view being
 presented.
+
+**Follow-up, same day:** the `.fullScreenCover(item:)` fix above did not resolve the failure —
+GotTimeUITests still failed at the identical assertion on the next real run. Refined the fix:
+`signedInGate` now reads `coordinator.activeCallPresentation`/`incomingCallPresentation` into
+local `let`s at the top of the function, and the two Bindings' `get` closures return those
+already-captured values rather than re-reading `coordinator` when invoked. Reasoning: an
+`@Observable` type's dependency tracking is tied to property reads happening during a tracked
+`body` evaluation; a read that only ever happens indirectly, inside a closure a framework
+modifier invokes later on its own schedule (e.g. `.fullScreenCover` checking its binding's
+current value outside the normal body-recomputation cycle), isn't guaranteed to register as a
+dependency the same way a textually-direct read does. Also added a diagnostic checkpoint to
+GotTimeUITests (checking for "Calling.../Ringing.../Time remaining" ~1.5s after confirming,
+before the real 8s assertion) specifically so that *if* this still isn't the full story, the
+next CI failure log says definitively whether the cover never presented at all versus presented
+and then stalled — rather than re-guessing blind again.

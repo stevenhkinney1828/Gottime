@@ -48,6 +48,20 @@ final class GotTimeUITests: XCTestCase {
         // 3. Explicit confirm.
         confirmButton.tap()
 
+        // Diagnostic checkpoint: confirms the active-call screen presented at all, separately
+        // from whether it goes on to actually reach "connected" — narrows a failure here down
+        // to "never presented" vs. "presented but stuck before connecting." Checks all three
+        // possible texts since a fast transition could already be at "Time remaining" by the
+        // time this runs.
+        Thread.sleep(forTimeInterval: 1.5)
+        let activeCallScreenAppeared = app.staticTexts["Calling..."].exists
+            || app.staticTexts["Ringing..."].exists
+            || app.staticTexts["Time remaining"].exists
+        XCTAssertTrue(
+            activeCallScreenAppeared,
+            "active-call screen never appeared at all after confirming (checked Calling.../Ringing.../Time remaining)"
+        )
+
         // 4. Simulated ringing, then 5. simulated answer (MockVoiceService auto-connects by
         // default) -> 6. countdown becomes visible.
         let timeRemainingLabel = app.staticTexts["Time remaining"]
