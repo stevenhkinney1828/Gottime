@@ -2,9 +2,9 @@
 
 Last updated: 2026-08-19
 
-**Current phase: Phase 1 — Mocked UX (in progress)**
+**Current phase: Phase 2 — Authentication (blocked on owner gate — see bottom)**
 
-Phase 0 is complete and committed (`0b42f44`).
+Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
 Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner gate
 
@@ -16,11 +16,10 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ `ios/project.yml` + empty App target + GotTimeCore/GotTimeMocks packages with placeholder tests
 - ✅ `supabase/migrations` 0001-0006 (five tables + RLS policies) + `auth_shim.sql` + `seed.sql` — **applied to a real local Postgres 17 instance and verified working**: all 6 migrations ran clean, the `on_auth_user_created` trigger correctly creates profiles, RLS correctly denies an unconnected user (Carol) and allows a connected participant (Alice), `redeem_connection_invite()` correctly creates a connection and rejects re-redemption, direct client INSERT into `connections`/`call_sessions` is correctly denied (permission denied, as designed), and the `requested_duration_seconds` CHECK constraint correctly accepts 60s/3600s and rejects 59s/3601s
 - ✅ `supabase/functions/` skeletons — `_shared/` helpers fully implemented (cors, logger, supabaseAdmin, twilioClient, apnsJwt) and unit-tested; the 7 feature functions are thin, tested stubs pending their real phase (noted in each file)
-- ✅ CI workflows (`ios-ci.yml`, `backend-ci.yml`, `sql-lint.yml`) — written; the `sql-lint.yml` assertions are the same ones just verified locally above, so it's expected to pass once it can actually run; cannot execute for real until a GitHub remote exists (see gate below)
+- ✅ CI workflows (`ios-ci.yml`, `backend-ci.yml`, `sql-lint.yml`) — written and connected to a real GitHub repository (`stevenhkinney1828/Gottime`). `ios-ci.yml` and `backend-ci.yml` have both run for real and gone green (see Phase 1 below). `sql-lint.yml` hasn't run yet — it only triggers on changes under `supabase/migrations`/`supabase/seed`, which haven't changed since the repo went up, and manual dispatch via the API 403s under the current fine-grained GitHub token (needs a one-click "Run workflow" in the browser instead — not urgent, the same assertions already passed locally against real Postgres, see below).
 - ✅ Local verification: `deno test`/`deno lint`/`deno fmt --check` all pass (10/10 tests); full migration + RLS dry-run passes against real local Postgres. Caught and fixed three real bugs along the way (a TypeScript BufferSource typing issue in the APNs JWT signer, a transaction-scoping bug in the auth_shim test helpers, and a missing explicit grant on the invite-redemption function) — all before they could cause silent failures later.
-- 🚧 **Owner gate #1 (remaining piece): an empty GitHub repository.** Owner already has a GitHub account. Once a repo exists and is connected, CI can run for real (Simulator build/test, SQL/RLS check) instead of relying on local verification alone — see the chat message asking for this.
 
-## Phase 1 — Mocked UX ✅ functionally complete, pending first compile
+## Phase 1 — Mocked UX ✅ complete, CI-verified
 - ✅ `GotTimeCore` models: `Profile`, `CallStatus` (11 cases — see DECISIONS.md re: the added `canceled` status), `CallSession`, `Connection`/`ConnectedPerson`/`ConnectionInvite`, `CallHistoryEntry` — all pure Swift, zero Apple-framework imports (verified: only `Foundation` appears anywhere in GotTimeCore)
 - ✅ `GotTimeCore` service protocols: `AuthService`, `ConnectionService`, `VoiceService`, `CallHistoryService`, `PushService`
 - ✅ `CallStateMachine` — the full transition table, an `apply()` helper that stamps timestamps/computes actual duration, exhaustively tested (all 121 from/to pairs checked against an independently-written expected table, plus named tests for every path in spec sections 19-20)
@@ -31,12 +30,10 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ SwiftUI screens — People (list + single-person fast path per spec section 6), duration picker (explicit-confirm required, matches the "Call Chris for 10 minutes" phrasing exactly), active call (Calling/Ringing → live countdown → post-call summary, all one continuous screen), incoming call (in-app banner standing in for CallKit until Phase 5), history, settings, onboarding, add-connection. A `CallCoordinator` centralizes all call-state handling per spec section 14, driven by `VoiceService.events` and never storing remaining time itself — always recomputed fresh from `CallTimer`.
 - ✅ `GotTimeUITests` — walks the full canonical flow (pick Chris → 5 min → explicit confirm → ringing → auto-connect → countdown → automatic ending → history gains exactly one new entry). Uses a `GOTTIME_DEV_TIME_SCALE` launch-environment override for test speed, separate from the gentler default a human manually testing the app gets.
 
-**Attempted to get a GitHub repo self-served via `gh auth login`'s device-code flow** (installs the GitHub CLI without ever needing the owner's password) — both the standard and `--scope user` install attempts stalled, most likely on a UAC consent dialog with no one able to click it in this non-interactive environment. Abandoned after a reasonable attempt rather than continuing to poll a possibly-permanently-stuck process; falling back to the owner providing repo access directly (see chat).
-
-**None of this Swift code has been compiled yet** — there is no Swift toolchain on this dev machine (see ARCHITECTURE.md/KNOWN_LIMITATIONS.md). Every one of the 56 Swift files has been manually reviewed multiple times (import boundaries checked, brace/paren balance checked file-by-file, every test's expected values hand-traced against the implementation, a real design bug in `VoiceEvent` caught and fixed mid-build by re-reading my own code critically), but real compiler verification is still pending the GitHub repo. Phase 1 is code-complete; the acceptance bar for calling it *done* is a green `ios-ci.yml` run, not just this local review.
+**Verified for real in CI, not just reviewed.** `ios-ci.yml` now runs on every push against a real `macos-latest` GitHub Actions runner: `GotTimeCore`'s and `GotTimeMocks`' test suites both pass, the app target compiles, and `GotTimeUITests` walks the entire canonical flow end to end on a real iOS Simulator — pick Chris, choose 5 minutes, explicit confirm, simulated ringing, auto-connect, live countdown, automatic termination at zero, "Done," and a new History entry recorded — all green. Getting there took real debugging, not just the initial build: six compile-time errors (a missing platform target, a timer-math test with a wrong expected value, four tests missing a buffered status event, a missing `import SwiftUI`, and a `deinit`-isolation error) and then a genuine runtime bug where the active-call screen never appeared after confirming a call. That last one took five serious attempts to root-cause — the first four all adjusted *how* SwiftUI's `.fullScreenCover`/`.sheet` presented the call screen and all failed identically, which turned out to be the tell: the fix was removing that presentation mechanism entirely in favor of a plain view-composition overlay, not tuning it further. Full blow-by-blow is in [DECISIONS.md](DECISIONS.md) for anyone curious, but the short version is: Phase 1 is done, and "done" here means a real compiler and a real Simulator agreed, not just careful reading.
 
 ## Phase 2 — Authentication
-⬜ Not started. 🚧 Will need: Supabase project + credentials; Apple Developer Sign-in-with-Apple Services ID (owner already enrolled in Apple Developer Program).
+🚧 Blocked on owner gate. Apple's half is already in hand — Team ID, Sign-in-with-Apple Key ID, and the private key file were supplied and are stored (gitignored) under `secrets/`. Still needed: a Supabase project and its credentials (project URL + API keys), so the Apple key can actually be wired into Supabase's Sign-in-with-Apple configuration and `profiles` RLS can be pushed to a real project instead of just the local Postgres approximation.
 
 ## Phase 3 — Connections
 ⬜ Not started.
@@ -62,8 +59,13 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 ---
 
 ## Owner gates cleared so far
-1. ~~GitHub account~~ — already had one (empty repo creation still pending)
+1. ~~GitHub account + repository~~ — repo created and connected; CI runs on every push
 2. ~~Apple Developer Program enrollment~~ — already enrolled
+3. ~~Sign-in-with-Apple Services ID/Key~~ — Team ID, Key ID, and private key supplied and stored
+
+## Owner gate now blocking (Phase 2)
+**A Supabase project.** Needed: create a free Supabase project, then share its Project URL and
+API keys (anon key + service role key). See the chat for a plain-language walkthrough.
 
 ## Owner gates still ahead
 See the table in the approved build plan / SETUP.md for the full list and what each requires.
