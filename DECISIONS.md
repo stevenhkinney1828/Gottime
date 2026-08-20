@@ -482,3 +482,41 @@ Moved `gtDebugState` to be the topmost ZStack layer (with `.allowsHitTesting(fal
 intercept real taps) instead of sitting underneath the presented content — in this architecture
 it now stays queryable regardless of what `callOverlay` is showing, which finally makes its
 result actually diagnostic if this still doesn't fix it.
+
+**Resolution, same day:** the ZStack rewrite fixed it. `testCanonicalFlow_...` got all the way
+through confirm, ringing, connect, the live countdown, automatic termination, and "Done" for the
+first time — five presentation-mechanism attempts in (`.constant`, two chained covers, one
+consolidated cover, `onDismiss` sequencing, and finally no modal presentation at all), it was the
+removal of UIKit modal-presentation coordination itself that mattered, not any adjustment within
+it. The specific reason a plain ZStack succeeds where every `.fullScreenCover`/`.sheet` variant
+failed identically was never fully isolated (Simulator/CI-specific animation handling being the
+leading suspect, per how consistently "Unable to monitor animations" showed up at the exact same
+moment across every failing run) — but five independent data points now agree on effect even
+without a fully traced cause, and the fix is also a legitimate simplification on its own terms,
+not just a workaround: this app never used real-modal semantics, and the ZStack overlay is fewer
+moving parts than what it replaced.
+
+That fix uncovered a second, unrelated, much smaller bug: the history-count assertion expected 7
+rows and got 9. Root cause: `app.cells.count` is unscoped — it walks the *entire* app element
+tree, not just the visible screen, and picked up `PeopleListView`'s own 2 rows (Chris, Jordan)
+even while visually covered by the History sheet (2 extra = 9 - 7, an exact match). This
+assertion had never been reached before today, since the test always failed earlier at the
+active-call screen — it was latent, not a regression from anything today's fixes touched. Fixed
+by giving History's `List` an explicit `.accessibilityIdentifier("historyList")` and scoping the
+test's query to that element specifically, rather than the unscoped `app.cells`.
+
+Removed all temporary diagnostics added across Follow-ups #3-#7 now that the root cause is
+confirmed fixed: the `print("[GotTime DEBUG] ...")` tracing in `CallCoordinator`/
+`MockVoiceService`, the `gtDebugState` accessibility element and its supporting doc comments in
+`ContentView`, and the 1.5s-sleep/manual-exists-check/`debugDescription`-dump diagnostic block in
+`GotTimeUITests` (restored to a plain `waitForExistence` on "Time remaining", matching the rest
+of the test's style). Also removed `.interactiveDismissDisabled()` from `ActiveCallView`/
+`IncomingCallView` (dead code once neither is presented modally) and corrected
+`CallCoordinator.swift`'s now-inaccurate doc comment, which still described the
+`.fullScreenCover(item:)` rationale after the code had moved away from it.
+
+**Lesson for future debugging sessions:** when several structurally different fixes to the same
+mechanism all fail in byte-for-byte identical ways, that repetition is itself the signal — it
+means the mechanism being adjusted isn't where the bug lives, even when each individual fix is
+well-reasoned. The break came from questioning whether `.fullScreenCover` should be used at all,
+not from a better theory about how to use it.

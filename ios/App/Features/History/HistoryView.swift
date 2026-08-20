@@ -26,6 +26,7 @@ struct HistoryView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .accessibilityIdentifier("historyList")
             }
         }
         .background(Color.gtBackground)

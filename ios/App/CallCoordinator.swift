@@ -2,11 +2,10 @@ import Foundation
 import Observation
 import GotTimeCore
 
-/// Identifiable wrappers purely for driving `.fullScreenCover(item:)`, which is the robust
-/// SwiftUI presentation pattern here — `.fullScreenCover(isPresented: .constant(...))` was
-/// tried first and is a known footgun: `.constant()`'s setter is a no-op, and SwiftUI's
-/// presentation coordinator sometimes needs to write back to the binding, silently desyncing
-/// it from the real state. `.fullScreenCover(item:)` takes a real two-way binding instead.
+/// Identifiable wrappers bundling a session with the profile its view needs, so ContentView's
+/// `callOverlay` can switch on one `CallPresentation` value instead of juggling several
+/// optionals in sync (see DECISIONS.md for why this ended up as a plain ZStack overlay rather
+/// than `.fullScreenCover`/`.sheet`).
 struct ActiveCallPresentation: Identifiable {
     let session: CallSession
     let otherPerson: Profile
@@ -124,17 +123,13 @@ final class CallCoordinator {
     // MARK: - Intents
 
     func call(_ person: ConnectedPerson, durationSeconds: Int) async {
-        print("[GotTime DEBUG] CallCoordinator.call: entry")
         guard let session = try? await voiceService.startCall(to: person, durationSeconds: durationSeconds) else {
             // Phase 7 (Reliability) adds structured logging and a user-facing error state
             // here; for now a failed startCall simply never presents an active call.
-            print("[GotTime DEBUG] CallCoordinator.call: startCall threw or returned nil, bailing")
             return
         }
-        print("[GotTime DEBUG] CallCoordinator.call: startCall returned session \(session.callUUID), status=\(session.status)")
         activeCall = session
         activeCallOtherPerson = person.profile
-        print("[GotTime DEBUG] CallCoordinator.call: activeCall set. activeCallPresentation nil? \(activeCallPresentation == nil)")
     }
 
     func answerIncomingCall() async {
@@ -187,22 +182,16 @@ final class CallCoordinator {
     private func handle(_ event: VoiceEvent) {
         switch event {
         case .incomingCall(let session, let callerProfile):
-            print("[GotTime DEBUG] handle: .incomingCall \(session.callUUID)")
             incomingCall = (session, callerProfile)
 
         case .statusChanged(let session):
-            print("[GotTime DEBUG] handle: .statusChanged \(session.callUUID) status=\(session.status), activeCall.callUUID=\(String(describing: activeCall?.callUUID))")
-            guard activeCall?.callUUID == session.callUUID else {
-                print("[GotTime DEBUG] handle: .statusChanged IGNORED (no matching activeCall)")
-                return
-            }
+            guard activeCall?.callUUID == session.callUUID else { return }
             activeCall = session
             if session.status == .connected {
                 startTicking()
             }
 
         case .callEnded(let callUUID):
-            print("[GotTime DEBUG] handle: .callEnded \(callUUID)")
             guard activeCall?.callUUID == callUUID else { return }
             stopTicking()
             // activeCall intentionally stays set, now carrying its final terminal status, so

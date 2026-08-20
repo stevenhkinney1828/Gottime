@@ -68,11 +68,9 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
 
     @discardableResult
     public func startCall(to recipient: ConnectedPerson, durationSeconds: Int) async throws -> CallSession {
-        print("[GotTime DEBUG] MockVoiceService.startCall: entry")
         lock.lock()
         profileDirectory[recipient.id] = recipient.profile
         lock.unlock()
-        print("[GotTime DEBUG] MockVoiceService.startCall: profileDirectory updated, lock released")
 
         var effectiveDuration = durationSeconds
         #if DEBUG
@@ -94,14 +92,10 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
             updatedAt: now
         )
         session = (try? CallStateMachine.apply(.outgoing, to: session, at: now)) ?? session
-        print("[GotTime DEBUG] MockVoiceService.startCall: about to storeNew, status=\(session.status)")
         storeNew(session)
-        print("[GotTime DEBUG] MockVoiceService.startCall: stored, about to emitStatusChanged")
         emitStatusChanged(session)
-        print("[GotTime DEBUG] MockVoiceService.startCall: emitted, scheduling auto-ringing, about to return")
 
         scheduleAutoRinging(callUUID: session.callUUID)
-        print("[GotTime DEBUG] MockVoiceService.startCall: returning session \(session.callUUID)")
         return session
     }
 

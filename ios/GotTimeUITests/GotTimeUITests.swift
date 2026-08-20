@@ -28,16 +28,6 @@ final class GotTimeUITests: XCTestCase {
         let app = launchApp()
         XCTAssertTrue(app.navigationBars["GotTime?"].waitForExistence(timeout: 5))
 
-        // Sanity-check the diagnostic element itself before trusting its absence later: if this
-        // fails, the gtDebugState mechanism (font size / overlay placement / identifier
-        // matching) is broken, not the call flow — a completely different fix than if it's
-        // present here but missing after confirming a call.
-        let earlyDebugState = app.staticTexts.matching(identifier: "gtDebugState").firstMatch
-        XCTAssertTrue(
-            earlyDebugState.waitForExistence(timeout: 5),
-            "gtDebugState diagnostic element itself never appeared even on the plain People list — the diagnostic mechanism is broken, not (necessarily) the call flow"
-        )
-
         // 1. Choose person. MockData seeds two connections (Chris, Jordan), so the People
         // screen shows a list rather than the single-person fast path.
         let chrisRow = app.buttons["Call Chris"]
@@ -57,34 +47,6 @@ final class GotTimeUITests: XCTestCase {
 
         // 3. Explicit confirm.
         confirmButton.tap()
-
-        // Diagnostic checkpoint: the previous version of this check (Calling.../Ringing.../
-        // Time remaining, all absent) proved the active-call screen never presents at all —
-        // but not *why*: whether the confirm tap/dismiss never happened, or the sheet
-        // dismissed but no cover appeared, or something else entirely. Dumping the full
-        // accessibility tree on failure answers that directly instead of guessing element by
-        // element across another 10-minute CI round trip.
-        Thread.sleep(forTimeInterval: 1.5)
-        let activeCallScreenAppeared = app.staticTexts["Calling..."].exists
-            || app.staticTexts["Ringing..."].exists
-            || app.staticTexts["Time remaining"].exists
-        let durationPickerStillShowing = app.staticTexts["How long do you have?"].exists
-        if !activeCallScreenAppeared {
-            // ContentView surfaces CallCoordinator's live state through this always-present,
-            // tiny accessibility element specifically because app-process print() output
-            // doesn't reliably reach the xcodebuild test log (confirmed: temporary trace prints
-            // added alongside this only ever showed up from the separate `swift test` package
-            // step, never from this UI-test step) — see DECISIONS.md.
-            let debugStateElement = app.staticTexts.matching(identifier: "gtDebugState").firstMatch
-            let debugStateValue = debugStateElement.exists ? debugStateElement.label : "<gtDebugState element not found>"
-            XCTFail("""
-            active-call screen never appeared 1.5s after confirming.
-            Duration picker still on screen: \(durationPickerStillShowing)
-            CallCoordinator debug state: \(debugStateValue)
-            Full accessibility tree at failure time:
-            \(app.debugDescription)
-            """)
-        }
 
         // 4. Simulated ringing, then 5. simulated answer (MockVoiceService auto-connects by
         // default) -> 6. countdown becomes visible.
@@ -115,10 +77,16 @@ final class GotTimeUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Chris"].waitForExistence(timeout: 5))
 
-        // `.cells` (not `.tables.cells`) so this doesn't depend on whether SwiftUI's List
-        // happens to back onto a table view or a collection view for the Xcode/iOS version
-        // this actually runs against.
-        let historyRowCount = app.cells.count
+        // Scoped to History's own list via its accessibilityIdentifier, not a bare `app.cells`
+        // — that query walks the *entire* app hierarchy, not just the visible screen, and
+        // silently included PeopleListView's own 2 rows (Chris, Jordan) even while covered by
+        // this sheet: exactly 2 extra (9 instead of 7) is what actually surfaced once the
+        // active-call-presentation bug blocking the whole flow was fixed and the test could
+        // reach this assertion for the first time. `.cells` (not `.tables.cells`) on the scoped
+        // element so this still doesn't depend on whether SwiftUI's List happens to back onto a
+        // table view or a collection view for the Xcode/iOS version this runs against.
+        let historyList = app.descendants(matching: .any).matching(identifier: "historyList").firstMatch
+        let historyRowCount = historyList.cells.count
         XCTAssertEqual(
             historyRowCount, 7,
             "expected the 6 seeded history entries plus the one just completed in this test"
