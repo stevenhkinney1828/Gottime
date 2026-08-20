@@ -42,7 +42,11 @@ public final class SupabaseAuthAdapter: NSObject, AuthService, @unchecked Sendab
                     await self.emitState(for: session)
                 case .signedOut, .userDeleted:
                     self.continuation.yield(.signedOut)
-                case .passwordRecovery, .tokenRefreshed:
+                case .passwordRecovery, .tokenRefreshed, .mfaChallengeVerified:
+                    // Not used by this app (no MFA flow, no password-recovery email flow — Sign
+                    // in with Apple is the only auth method) — listed explicitly rather than a
+                    // catch-all `default:` so a future SDK case addition fails the build here
+                    // instead of silently doing nothing.
                     break
                 }
             }
