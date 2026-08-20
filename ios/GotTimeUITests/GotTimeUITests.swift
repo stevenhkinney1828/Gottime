@@ -48,19 +48,25 @@ final class GotTimeUITests: XCTestCase {
         // 3. Explicit confirm.
         confirmButton.tap()
 
-        // Diagnostic checkpoint: confirms the active-call screen presented at all, separately
-        // from whether it goes on to actually reach "connected" — narrows a failure here down
-        // to "never presented" vs. "presented but stuck before connecting." Checks all three
-        // possible texts since a fast transition could already be at "Time remaining" by the
-        // time this runs.
+        // Diagnostic checkpoint: the previous version of this check (Calling.../Ringing.../
+        // Time remaining, all absent) proved the active-call screen never presents at all —
+        // but not *why*: whether the confirm tap/dismiss never happened, or the sheet
+        // dismissed but no cover appeared, or something else entirely. Dumping the full
+        // accessibility tree on failure answers that directly instead of guessing element by
+        // element across another 10-minute CI round trip.
         Thread.sleep(forTimeInterval: 1.5)
         let activeCallScreenAppeared = app.staticTexts["Calling..."].exists
             || app.staticTexts["Ringing..."].exists
             || app.staticTexts["Time remaining"].exists
-        XCTAssertTrue(
-            activeCallScreenAppeared,
-            "active-call screen never appeared at all after confirming (checked Calling.../Ringing.../Time remaining)"
-        )
+        let durationPickerStillShowing = app.staticTexts["How long do you have?"].exists
+        if !activeCallScreenAppeared {
+            XCTFail("""
+            active-call screen never appeared 1.5s after confirming.
+            Duration picker still on screen: \(durationPickerStillShowing)
+            Full accessibility tree at failure time:
+            \(app.debugDescription)
+            """)
+        }
 
         // 4. Simulated ringing, then 5. simulated answer (MockVoiceService auto-connects by
         // default) -> 6. countdown becomes visible.
