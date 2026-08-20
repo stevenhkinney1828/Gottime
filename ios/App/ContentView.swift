@@ -1,32 +1,53 @@
 import SwiftUI
 import GotTimeCore
 
-/// App root: resolves auth state, hosts onboarding vs. the main experience, and presents
-/// incoming/active calls as full-screen covers driven entirely by CallCoordinator's
+/// App root: resolves auth state, hosts onboarding vs. the main experience, and layers
+/// incoming/active calls on top as a plain ZStack overlay driven entirely by CallCoordinator's
 /// observable state — no view below this one reaches into VoiceService directly.
+///
+/// Deliberately not `.fullScreenCover`/`.sheet` for the call overlay (see DECISIONS.md
+/// Follow-up #7): four different modal-presentation approaches all failed identically in
+/// GotTimeUITests, which pointed at UIKit modal-presentation coordination itself — not any
+/// particular API shape or timing detail within it — being unreliable here. A ZStack overlay is
+/// ordinary view composition, not a modal transition to coordinate, so it sidesteps that whole
+/// class of problem. Nothing here wants swipe-to-dismiss anyway (every call screen already ran
+/// `.interactiveDismissDisabled()`), so real-modal semantics were never actually needed.
 struct ContentView: View {
     @Environment(\.appEnvironment) private var environment
     @State private var coordinator: CallCoordinator?
     @State private var authState: AuthState = .signedOut
 
     var body: some View {
-        Group {
-            if let coordinator {
-                signedInGate(coordinator: coordinator)
-            } else {
-                ProgressView()
+        ZStack {
+            Group {
+                if let coordinator {
+                    signedInContent(coordinator: coordinator)
+                } else {
+                    ProgressView()
+                }
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
+
             if let coordinator {
-                // Temporary diagnostic (see DECISIONS.md) — surfaces live CallCoordinator
-                // state through the same accessibility-query channel GotTimeUITests already
-                // uses successfully for everything else, since app-process print() output does
-                // not reliably show up in the xcodebuild test log the way `swift test` output
-                // does. Remove once the active-call-presentation bug is found and fixed.
-                Text(debugStateLabel(coordinator))
-                    .font(.caption2)
-                    .accessibilityIdentifier("gtDebugState")
+                callOverlay(coordinator: coordinator)
+            }
+
+            if let coordinator {
+                // Temporary diagnostic (see DECISIONS.md) — deliberately the topmost ZStack
+                // layer so it stays accessibility-queryable no matter what `callOverlay` is
+                // currently showing, unlike the earlier version of this element which sat
+                // *underneath* a `.fullScreenCover` and was therefore always hidden the instant
+                // anything was presented, making its absence uninformative. Remove once the
+                // active-call-presentation bug is confirmed fixed.
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Text(debugStateLabel(coordinator))
+                            .font(.caption2)
+                            .accessibilityIdentifier("gtDebugState")
+                    }
+                }
+                .allowsHitTesting(false)
             }
         }
         .task {
@@ -42,20 +63,17 @@ struct ContentView: View {
     private func debugStateLabel(_ coordinator: CallCoordinator) -> String {
         let active = coordinator.activeCall.map { "\($0.status)" } ?? "nil"
         let incoming = coordinator.incomingCall != nil ? "SET" : "nil"
-        let presentation = coordinator.activeCallPresentation != nil ? "SET" : "nil"
+        let presentation: String
+        switch coordinator.presentation {
+        case .incoming: presentation = "incoming"
+        case .active: presentation = "active"
+        case nil: presentation = "nil"
+        }
         return "gtDebug active=\(active) incoming=\(incoming) presentation=\(presentation)"
     }
 
     @ViewBuilder
-    private func signedInGate(coordinator: CallCoordinator) -> some View {
-        // Read directly here, textually within this function's body computation, rather than
-        // only inside the Binding's get closure below. @Observable's dependency tracking is
-        // keyed to property reads that happen during a tracked body computation; a read that
-        // only ever happens indirectly, inside a closure invoked later by a framework
-        // modifier's own internal machinery, is not guaranteed to register the same way. This
-        // capture is what actually guarantees signedInGate re-runs when it changes.
-        let presentation = coordinator.presentation
-
+    private func signedInContent(coordinator: CallCoordinator) -> some View {
         Group {
             switch authState {
             case .signedOut:
@@ -67,25 +85,19 @@ struct ContentView: View {
             }
         }
         .environment(coordinator)
-        // A single cover for both incoming/active, not two chained `.fullScreenCover`
-        // modifiers — see the CallPresentation doc comment in CallCoordinator.swift.
-        .fullScreenCover(item: Binding(
-            get: { presentation },
-            set: { newValue in
-                guard newValue == nil else { return }
-                switch presentation {
-                case .incoming: Task { await coordinator.declineIncomingCall() }
-                case .active: coordinator.dismissActiveCall()
-                case nil: break
-                }
-            }
-        )) { item in
-            switch item {
-            case .incoming(let presentation):
-                IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
-            case .active(let presentation):
-                ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
-            }
+    }
+
+    @ViewBuilder
+    private func callOverlay(coordinator: CallCoordinator) -> some View {
+        switch coordinator.presentation {
+        case .incoming(let presentation):
+            IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
+                .environment(coordinator)
+        case .active(let presentation):
+            ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
+                .environment(coordinator)
+        case nil:
+            EmptyView()
         }
     }
 }

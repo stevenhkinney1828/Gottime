@@ -63,7 +63,6 @@ struct IncomingCallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.gtBackground)
-        .interactiveDismissDisabled()
     }
 
     private func answerControl(symbol: String, label: String, tint: Color, action: @escaping () -> Void) -> some View {

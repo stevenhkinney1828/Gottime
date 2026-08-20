@@ -39,7 +39,6 @@ struct ActiveCallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.gtBackground)
-        .interactiveDismissDisabled()
     }
 
     @ViewBuilder

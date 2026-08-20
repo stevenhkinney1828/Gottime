@@ -446,3 +446,39 @@ takes an `onConfirm: (Int) -> Void` closure, calls it with the resolved duration
 sheet's `onDismiss` callback — which SwiftUI guarantees fires once the dismissal has actually
 completed, not merely been requested. This removes the race structurally rather than papering
 over it with an arbitrary delay.
+
+**Follow-up #7, same day:** the `onDismiss`-based sequencing fix (#6) also failed identically —
+byte-for-byte the same failure text, same empty `debugDescription`. That's four structurally
+different fixes (`isPresented: .constant`, two chained `.fullScreenCover(item:)`, one
+consolidated cover, and now correct dismiss-then-present sequencing via `onDismiss`) all failing
+the exact same way. That pattern means the bug was never in any of the things being changed —
+every attempt so far adjusted *which* modal-presentation API or *when* it fires, and none of
+that mattered.
+
+Also recognized a flaw in the `gtDebugState` diagnostic itself: it lived in a `.overlay` on
+`ContentView`'s root, *underneath* wherever `.fullScreenCover` presents its content — so it was
+always hidden the instant *anything* was presented, cover working correctly or not. Its "not
+found" result across every run was never actually informative about which side of the bug it
+was on; it could only ever confirm "something is covering the screen," not distinguish a
+correctly-showing cover from a stuck one. That undercuts the "stuck transition" reasoning from
+Follow-up #5 more than it supports it — the evidence for a hang/stuck-transition was thinner
+than it looked at the time.
+
+Stopped adjusting the presentation mechanism's timing/shape and questioned the mechanism itself.
+Replaced `.fullScreenCover(item:)` entirely with a plain `ZStack` overlay in `ContentView`:
+`callOverlay(coordinator:)` switches on `coordinator.presentation` and renders `IncomingCallView`
+or `ActiveCallView` directly as a top ZStack layer, with no UIKit modal presentation involved at
+all — just ordinary SwiftUI view composition, which has no transition-animation-coordination
+layer to race against or get stuck in. This isn't a workaround so much as removing a dependency
+this app never actually needed: swipe-to-dismiss was already disabled on every call screen
+(`.interactiveDismissDisabled()`, now removed as dead code along with it), so the "real modal"
+semantics `.fullScreenCover` provides over a plain overlay were never being used. Both explicit
+dismissal paths (`dismissActiveCall()` from the "Done"/"Call Again" buttons,
+`declineIncomingCall()` from the decline button) already call `CallCoordinator` directly and
+never went through the cover's dismiss-binding `set` closure, so removing it costs nothing
+functionally.
+
+Moved `gtDebugState` to be the topmost ZStack layer (with `.allowsHitTesting(false)` so it can't
+intercept real taps) instead of sitting underneath the presented content — in this architecture
+it now stays queryable regardless of what `callOverlay` is showing, which finally makes its
+result actually diagnostic if this still doesn't fix it.
