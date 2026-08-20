@@ -28,6 +28,9 @@ supabase/functions/**/.deno/
 .vscode/
 .idea/
 
+# Claude Code local tooling/session state — never part of the project itself
+.claude/
+
 # Logs
 *.log
 npm-debug.log*
