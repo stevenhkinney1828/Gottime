@@ -96,13 +96,17 @@ final class CallCoordinator {
     // MARK: - Intents
 
     func call(_ person: ConnectedPerson, durationSeconds: Int) async {
+        print("[GotTime DEBUG] CallCoordinator.call: entry")
         guard let session = try? await voiceService.startCall(to: person, durationSeconds: durationSeconds) else {
             // Phase 7 (Reliability) adds structured logging and a user-facing error state
             // here; for now a failed startCall simply never presents an active call.
+            print("[GotTime DEBUG] CallCoordinator.call: startCall threw or returned nil, bailing")
             return
         }
+        print("[GotTime DEBUG] CallCoordinator.call: startCall returned session \(session.callUUID), status=\(session.status)")
         activeCall = session
         activeCallOtherPerson = person.profile
+        print("[GotTime DEBUG] CallCoordinator.call: activeCall set. activeCallPresentation nil? \(activeCallPresentation == nil)")
     }
 
     func answerIncomingCall() async {
@@ -155,16 +159,22 @@ final class CallCoordinator {
     private func handle(_ event: VoiceEvent) {
         switch event {
         case .incomingCall(let session, let callerProfile):
+            print("[GotTime DEBUG] handle: .incomingCall \(session.callUUID)")
             incomingCall = (session, callerProfile)
 
         case .statusChanged(let session):
-            guard activeCall?.callUUID == session.callUUID else { return }
+            print("[GotTime DEBUG] handle: .statusChanged \(session.callUUID) status=\(session.status), activeCall.callUUID=\(String(describing: activeCall?.callUUID))")
+            guard activeCall?.callUUID == session.callUUID else {
+                print("[GotTime DEBUG] handle: .statusChanged IGNORED (no matching activeCall)")
+                return
+            }
             activeCall = session
             if session.status == .connected {
                 startTicking()
             }
 
         case .callEnded(let callUUID):
+            print("[GotTime DEBUG] handle: .callEnded \(callUUID)")
             guard activeCall?.callUUID == callUUID else { return }
             stopTicking()
             // activeCall intentionally stays set, now carrying its final terminal status, so

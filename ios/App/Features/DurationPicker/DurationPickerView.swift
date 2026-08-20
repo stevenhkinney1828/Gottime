@@ -139,9 +139,13 @@ struct DurationPickerView: View {
     /// overlapping ones.
     private func confirmCall() {
         guard let minutes = resolvedMinutes else { return }
+        print("[GotTime DEBUG] confirmCall: entry, minutes=\(minutes)")
         dismiss()
+        print("[GotTime DEBUG] confirmCall: dismiss() called, spawning Task")
         Task {
+            print("[GotTime DEBUG] confirmCall Task: about to await coordinator.call")
             await coordinator.call(person, durationSeconds: DurationPolicy.seconds(forMinutes: minutes))
+            print("[GotTime DEBUG] confirmCall Task: coordinator.call returned")
         }
     }
 }

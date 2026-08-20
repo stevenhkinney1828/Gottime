@@ -315,3 +315,30 @@ GotTimeUITests (checking for "Calling.../Ringing.../Time remaining" ~1.5s after 
 before the real 8s assertion) specifically so that *if* this still isn't the full story, the
 next CI failure log says definitively whether the cover never presented at all versus presented
 and then stalled — rather than re-guessing blind again.
+
+**Follow-up #2, same day:** the diagnostic checkpoint fired — the active-call screen still never
+appeared — and its `app.debugDescription` dump was the useful part: instead of the normal
+`Element subtree:` dump of the live view hierarchy, it printed only `Query chain: →Find: Target
+Application '...'` with nothing else. That format is what XCUITest prints when it cannot
+resolve/snapshot the target at all, not what a healthy-but-unexpected UI state looks like — the
+app was unresponsive to the accessibility protocol at that instant, not just showing the wrong
+screen. Checked for an actual crash report in the same log; none found, and the routine
+"Checking for crash reports" teardown line is boilerplate that runs on every test regardless.
+Absence of a crash report plus total accessibility unresponsiveness points at a hang (something
+blocking the main thread) rather than a crash.
+
+Re-read `MockVoiceService` end-to-end for the specific failure mode that would cause this: an
+`NSLock` held across an `await` suspension, or a re-entrant `lock()` call from code already
+holding it. Found neither — every `lock()`/`unlock()` pair in the file is balanced within one
+synchronous stretch, never straddling an `await`. `CallStateMachine.apply` (the other function
+in this path) is a pure, synchronous, non-recursive function with no loop — not a plausible hang
+source either. Concluded the code read doesn't reveal an obvious hang, so a third speculative
+fix isn't justified yet.
+
+Instead of another guess, added temporary `print("[GotTime DEBUG] ...")` tracing at every step
+of the confirm path — `DurationPickerView.confirmCall()`, `CallCoordinator.call()`,
+`CallCoordinator.handle(_:)`, and `MockVoiceService.startCall()` — so the next CI log shows
+exactly which of these actually run and which never fire, replacing another round of blind
+hypothesis-and-fix with direct evidence of where execution actually stops. These print
+statements are temporary and should be removed once the root cause is confirmed and fixed — do
+not mistake them for permanent logging (Phase 7 adds real structured logging).
