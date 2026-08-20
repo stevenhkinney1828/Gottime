@@ -28,6 +28,16 @@ final class GotTimeUITests: XCTestCase {
         let app = launchApp()
         XCTAssertTrue(app.navigationBars["GotTime?"].waitForExistence(timeout: 5))
 
+        // Sanity-check the diagnostic element itself before trusting its absence later: if this
+        // fails, the gtDebugState mechanism (font size / overlay placement / identifier
+        // matching) is broken, not the call flow — a completely different fix than if it's
+        // present here but missing after confirming a call.
+        let earlyDebugState = app.staticTexts.matching(identifier: "gtDebugState").firstMatch
+        XCTAssertTrue(
+            earlyDebugState.waitForExistence(timeout: 5),
+            "gtDebugState diagnostic element itself never appeared even on the plain People list — the diagnostic mechanism is broken, not (necessarily) the call flow"
+        )
+
         // 1. Choose person. MockData seeds two connections (Chris, Jordan), so the People
         // screen shows a list rather than the single-person fast path.
         let chrisRow = app.buttons["Call Chris"]

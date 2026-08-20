@@ -25,7 +25,7 @@ struct ContentView: View {
                 // not reliably show up in the xcodebuild test log the way `swift test` output
                 // does. Remove once the active-call-presentation bug is found and fixed.
                 Text(debugStateLabel(coordinator))
-                    .font(.system(size: 6))
+                    .font(.caption2)
                     .accessibilityIdentifier("gtDebugState")
             }
         }

@@ -368,3 +368,26 @@ non-nil status) but the cover still isn't showing, the bug is purely in the
 `.fullScreenCover(item:)` presentation mechanics, and the print statements + this reasoning about
 log capture becomes a documented dead end, not wasted — it rules out an entire class of
 hypothesis (async/lock hangs) with actual evidence rather than more reading-the-code guessing.
+
+**Follow-up #4, same day:** the `gtDebugState` run came back with the element itself reported
+as not found — but re-reading that same log surfaced a detail that changes the read on
+*everything* since Follow-up #2: the individual `.exists` checks (for `gtDebugState`, and for
+"How long do you have?" before it) resolve cleanly and quickly, false after three ~1s retries,
+every time. A genuinely hung/unresponsive main thread would make *those* queries stall too, not
+just the full-tree `debugDescription` dump. That the targeted checks keep resolving fine while
+only the full-tree dump comes back as an unresolved "Query chain" now looks more like
+`debugDescription`'s own snapshot mechanism being unreliable in this CI/Simulator environment —
+a known rough edge, distinct from targeted element queries — than evidence the app is hung.
+Treating the "hang" conclusion from Follow-up #2 as likely wrong, not confirmed.
+
+That leaves one fact standing: `gtDebugState` itself was not found, via a clean check, not a
+stalled one. Two readings remain open: either `CallCoordinator`'s state genuinely isn't what's
+expected, or the diagnostic element itself is broken (font size collapsing its frame, overlay
+placement, an identifier-matching mistake) — meaning its absence would prove nothing about the
+real bug either way. Added an early sanity assertion right after the People list first appears
+(before any interaction) that `gtDebugState` exists then; if *that* fails, the diagnostic itself
+is broken and needs a different mechanism entirely, not another theory about CallCoordinator.
+Also swapped the `.font(.system(size: 6))` for `.caption2` — 6pt is small enough that a
+degenerate/zero layout frame excluding it from the accessibility tree was a real possibility,
+and there's no reason to leave that variable in place while it's still unclear which side of
+this the bug is on.
