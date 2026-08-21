@@ -85,20 +85,102 @@ These exact steps are common but occasionally Apple tweaks their portal's layout
 anything looks different from this description when we get there, just describe what you see
 and Claude Code will help you find the right button.
 
-### 4. A Twilio account **(not yet needed)**
-Twilio is the service that actually carries the voice call audio between the two phones.
-You'll create an account and add a small starting balance (about $20). Real cost per call is
-a small fraction of a cent per minute, so for a handful of friends/family this should run to
-a few dollars a month at most.
+### 4. A Twilio account
+**Status: done.** Account created, billing turned on with a starting balance, and all the
+credentials Claude Code needed are stored. This is the service that carries the actual voice
+call audio between the two phones.
 
-### 5. Two physical iPhones **(not yet needed)**
+### 5. Two physical iPhones **(this is the current blocker, along with #6 below)**
 For the real end-to-end call test — one phone is you, one is whoever you're testing with
 (e.g., your brother). Simulators can't test real phone calls, microphones, or lock-screen
-behavior, so this step is unavoidable and happens more than once as features are added.
+behavior, so this step is unavoidable and happens more than once as features are added. Nothing
+to click here — just have both phones on hand and charged when you're ready to test.
 
-### 6. An App Store Connect API key + Internal Testing group **(not yet needed)**
-This is what lets the cloud Mac sign and upload builds automatically, and lets your two
-test iPhones install them via TestFlight before anyone else is invited.
+### 6. An App Store Connect API key + Internal Testing group **(this is the current blocker)**
+This is what lets the cloud Mac sign builds and upload them to TestFlight automatically — the
+last thing needed before a real build can land on your two iPhones. Three parts, done in order:
+
+**Part A — the API key** (do this on a computer, in a browser, at appstoreconnect.apple.com):
+
+1. Go to **appstoreconnect.apple.com** and sign in with your Apple Developer account.
+2. Click **Users and Access** (in the sidebar or top navigation).
+3. Click the **Integrations** tab.
+   - If you see a **Request Access** button instead of key options, click it, check the
+     agreement box, and click **Submit** — this is a one-time approval Apple grants
+     automatically, usually within a few minutes. Come back to this page once it's through.
+4. Click the **Team Keys** tab (not "Individual Keys" — Team Keys work no matter who's signed
+   in, which is what an automated cloud process needs).
+5. Click **Generate API Key** (or the **+** button).
+6. Under **Name**, type anything you'll recognize later, e.g. `GotTime CI`. This is just a
+   label — it's not part of the key itself.
+7. Under **Access**, choose **App Manager**. (Not "Developer" — that role can't manage
+   TestFlight testers, which this project will need later when friends and family get invited.)
+8. Click **Generate**.
+9. You'll now see three things on the page:
+   - **Key ID** — a short code.
+   - **Issuer ID** — shown near the top of the Integrations page, above the key list.
+   - **Download API Key** — click this to download a file ending in `.p8`. **Apple only lets
+     you download this once — if you lose it, you can't re-download it, only revoke it and
+     make a new one.** Save the download somewhere you won't lose it.
+10. One more thing, from a different page: go to your name/account in the top right →
+    **Membership**. Copy the **Team ID** (a 10-character code).
+
+You now have four things: **Key ID**, **Issuer ID**, the downloaded **.p8 file**, and your
+**Team ID**. These go straight into GitHub yourself, not through Claude Code — this is Apple's
+private signing key, and the fewer places it passes through, the better. Here's where each one
+goes (github.com → your repository → **Settings** tab → **Secrets and variables** → **Actions**
+→ **New repository secret**, repeated four times):
+
+| Secret name (type exactly this) | Value |
+|---|---|
+| `APP_STORE_CONNECT_API_KEY_ID` | the Key ID |
+| `APP_STORE_CONNECT_ISSUER_ID` | the Issuer ID |
+| `APP_STORE_CONNECT_API_KEY_P8` | open the `.p8` file in a text editor (like Notepad) and paste its entire contents, including the `-----BEGIN PRIVATE KEY-----`/`-----END PRIVATE KEY-----` lines |
+| `APPLE_TEAM_ID` | the Team ID |
+
+Once all four are saved, tell Claude Code. The GitHub access it has doesn't extend to reading
+repository secrets at all (not even just their names), so it can't directly confirm they're
+saved correctly — but the next push will show it clearly either way: the "Sign & upload to
+TestFlight" job's first step checks for exactly these names and will visibly report whether
+it found them, right there in the same Actions log Claude Code already checks after every push.
+
+**Part B — register the app itself in App Store Connect** (a real, necessary step —
+unlike everything above, this one Apple genuinely requires done manually, first, before the
+cloud Mac's very first upload attempt can succeed at all):
+
+1. In App Store Connect, go to **Apps** → click the **+** → **New App**.
+2. **Platform:** iOS.
+3. **Name:** `GotTime?` (or anything you'd like testers to see — this can be changed later).
+4. **Primary Language:** English (or your preference).
+5. **Bundle ID:** choose `com.stevenkinney.gottime` from the dropdown — it's already there from
+   the Sign in with Apple setup back in an earlier step, nothing new to register.
+6. **SKU:** any internal label only you ever see, e.g. `gottime001`.
+7. Leave **User Access** as-is, then click **Create**.
+
+Do this, and save the four secrets in Part A, before telling Claude Code you're ready — the
+signing/upload code is already written and pushed, so Claude Code can trigger a fresh run
+directly rather than needing any new code change first. The very first real attempt will fail
+with a confusing error if this app record doesn't exist yet, so this step needs to come first.
+
+**Part C — the Internal Testing group** (do this once a real signed build has actually landed
+in App Store Connect — Claude Code will let you know once a push succeeds):
+
+1. In App Store Connect, go to **Apps** and click into GotTime (the app record from Part B).
+2. Click the **TestFlight** tab.
+3. Under **Internal Testing**, click the **+** next to it (or "Create Group" if that's what
+   you see).
+4. Name the group anything, e.g. `Family Testers`.
+5. Check the box for yourself (and anyone else on your Apple Developer account team you want
+   testing early) as a tester in that group.
+6. Look for a toggle or setting like **"Automatically distribute builds"** and make sure it's
+   turned on — that way every new build Claude Code's pipeline uploads shows up on your phone
+   automatically, without you having to come back here and approve each one by hand.
+7. Install the **TestFlight** app from the real App Store on your iPhone (if you don't have it
+   already) — that's where the actual GotTime builds will show up once uploaded.
+
+Apple's own screens occasionally shift button placement between updates — if anything here
+looks different from what you see, just describe it or send a screenshot and Claude Code will
+help you find the right button.
 
 ### 7. An APNs "VoIP" push key **(not yet needed)**
 A one-time download from Apple's developer site that lets your phone show the native

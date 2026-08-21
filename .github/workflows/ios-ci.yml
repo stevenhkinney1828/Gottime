@@ -69,6 +69,14 @@ jobs:
   # Phase 4+ only. Always runs so it shows up green in the Actions UI, but its real steps are
   # skipped until APP_STORE_CONNECT_API_KEY_ID (and the other signing secrets) exist — so this
   # file is complete and correct from Phase 0 onward rather than needing a rewrite later.
+  #
+  # Written before real Apple credentials exist to sign anything with — unlike every backend
+  # piece built the same way (Edge Function logic tested against fakes before real Twilio/
+  # Supabase creds existed), there is no local or fake way to test xcodebuild signing flags at
+  # all; real App Store Connect credentials are the only possible test harness for this job.
+  # Every flag/plist key below was checked against Apple's own xcodebuild man page and current
+  # documentation (see DECISIONS.md), but this should be treated as a strong first draft, not a
+  # verified-working pipeline, until it actually runs once the owner gate below is cleared.
   sign-and-upload:
     name: Sign & upload to TestFlight
     needs: build-and-test
@@ -89,12 +97,97 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Archive, sign, and upload to TestFlight
+      - name: Install XcodeGen
         if: steps.check.outputs.ready == 'true'
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        if: steps.check.outputs.ready == 'true'
+        working-directory: ios
+        run: xcodegen generate
+
+      # AuthKey_<key ID>.p8 is the exact filename App Store Connect gives you on download, and
+      # is passed here by its full explicit path rather than relying on xcodebuild's own
+      # default search directories (~/private_keys, ~/.appstoreconnect/private_keys, etc.) —
+      # simpler to reason about than depending on unwritten-here search-order behavior.
+      - name: Write App Store Connect API key to disk
+        if: steps.check.outputs.ready == 'true'
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
         run: |
-          echo "Not yet implemented — lands in Phase 4. See BUILD_STATUS.md and DECISIONS.md."
-          # Will: brew install xcodegen && xcodegen generate, xcodebuild archive using the
-          # App Store Connect API key (APP_STORE_CONNECT_API_KEY_ID/_ISSUER_ID/_P8,
-          # APPLE_TEAM_ID, IOS_BUNDLE_ID secrets) for signing, then upload the resulting .ipa
-          # to TestFlight via `xcrun altool` or the App Store Connect API.
-          exit 1
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          AUTH_KEY_PATH="$RUNNER_TEMP/private_keys/AuthKey_${API_KEY_ID}.p8"
+          printf '%s' "$API_KEY_P8" > "$AUTH_KEY_PATH"
+          echo "AUTH_KEY_PATH=$AUTH_KEY_PATH" >> "$GITHUB_ENV"
+
+      # CODE_SIGN_STYLE/CODE_SIGNING_* are passed as build-setting overrides on the command
+      # line, not changed in project.yml itself — the checked-in project deliberately disables
+      # signing at the project level (see project.yml's own header comment) so the always-running
+      # Simulator job above never needs a signing identity. -allowProvisioningUpdates lets
+      # xcodebuild create/update the app's certificates and provisioning profile itself via the
+      # API key's authority (this is what "automatic signing" means for a headless CI box with
+      # no prior manual Xcode/Keychain setup).
+      - name: Archive
+        if: steps.check.outputs.ready == 'true'
+        working-directory: ios
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild archive \
+            -project GotTime.xcodeproj \
+            -scheme GotTime \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/GotTime.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
+
+      # destination=upload makes -exportArchive both export AND upload directly to App Store
+      # Connect/TestFlight in one step — no separate altool/Transporter call needed. "method"
+      # must be app-store-connect, not the older app-store value Xcode 15+ deprecated.
+      - name: Write export options plist
+        if: steps.check.outputs.ready == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>destination</key>
+            <string>upload</string>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Export & upload to TestFlight
+        if: steps.check.outputs.ready == 'true'
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/export"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/GotTime.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID"

@@ -880,3 +880,92 @@ SDK SPM package (a binary XCFramework) resolves cleanly, the whole App target co
 `TwilioVoiceAdapter.swift` included, and GotTimeUITests' mocked canonical-flow test still passes
 unchanged. The signing job's existing secret-existence guard correctly no-op'd its archive step,
 exactly as designed since Phase 0 — no Apple signing credentials exist yet.
+
+## `sign-and-upload` job implemented ahead of the App Store Connect owner gate
+
+With `TwilioVoiceAdapter` done, the only Phase 4 work left is entirely gated on two things only
+the owner can supply (two physical iPhones; an App Store Connect API key + Internal Testing
+group). Rather than leave `ios-ci.yml`'s `sign-and-upload` job as the Phase 0 stub (`exit 1`)
+until that gate clears, implemented it now — archive → export → upload to TestFlight, driven
+entirely by an App Store Connect API key (no manually-exported `.p12` certificate, no
+Keychain Access, no local Mac ever touches a signing identity, consistent with the CI-is-the-
+only-Mac decision at the top of this file).
+
+**This is a genuinely different category of "done" than everything else built this session.**
+Every other piece of ahead-of-the-gate work (the Twilio Edge Functions before real Twilio
+credentials existed, the whole Phase 0-3 backend) had a local or fake-credentialed way to
+actually execute and test the logic before the real gate cleared. There is no equivalent for
+`xcodebuild` signing flags: no fake certificate authority stands in for Apple's real one, and a
+real App Store Connect API key is the only thing that can ever exercise this code path at all.
+So unlike every ✅ elsewhere in BUILD_STATUS.md, this is recorded as written-and-verified-on-paper,
+not verified-by-running — flagged explicitly rather than glossed over, and expected to need at
+least one real iteration once the owner's credentials make a real run possible for the first time.
+
+**What was verified, precisely, before writing it:**
+- Every `xcodebuild` flag (`-authenticationKeyPath`/`-authenticationKeyID`/
+  `-authenticationKeyIssuerID`, `-allowProvisioningUpdates`) against Apple's own current
+  `xcodebuild` man page text directly, not a summary of it.
+- The `exportOptionsPlist` schema (`destination: upload` — exports *and* uploads to TestFlight
+  in one step, no separate `altool`/Transporter call needed; `signingStyle: automatic`;
+  `teamID`) against multiple cross-corroborated current sources.
+- A real, current conflict resolved with evidence rather than picked arbitrarily: `method` must
+  be `app-store-connect`, not the older `app-store` value — confirmed via a real Flutter GitHub
+  issue quoting Xcode's own deprecation warning text (`app-store` was deprecated in favor of
+  `app-store-connect` around Xcode 15), not just one blog's say-so.
+- The `AuthKey_<key ID>.p8` naming convention — but rather than lean on xcodebuild's own default
+  search directories for that file, this passes its full path explicitly via
+  `-authenticationKeyPath`, sidestepping any question of whether this job's environment matches
+  an assumed default search order.
+- **Caught and fixed a real mistake in my own first draft, with a parser, not just a re-read**:
+  an initial pass "fixed" the exported plist's heredoc to be flush-left (worried indentation
+  before `<?xml` might upset a strict parser), which actually breaks the *YAML*, since a block
+  scalar's (`run: |`) content must stay indented at or above its first line's level or the
+  scalar terminates early — a lesser indentation ends the block right there, silently producing
+  a malformed workflow file. Loaded the file with a real YAML library (`js-yaml`, via Deno) and
+  confirmed YAML block scalars already strip the *common* leading indentation before the string
+  ever becomes shell-script content — so the original, consistently-indented version was correct
+  all along, and writes a properly flush-left `<?xml` line to disk with no fix needed. Also ran
+  `actionlint` (which embeds `shellcheck`) against every workflow file in the repo — zero
+  findings — as one more real check beyond eyeballing the YAML a second time.
+- `CODE_SIGN_STYLE`/`CODE_SIGNING_*`/`DEVELOPMENT_TEAM` are passed as `xcodebuild` command-line
+  build-setting overrides, not written into `project.yml` itself — the checked-in project
+  deliberately disables signing at the project level so the always-running Simulator job never
+  needs a signing identity (see the Xcode-project-defined-by-XcodeGen entry above); this job
+  overrides those settings for its own archive step only, exactly as that entry's original
+  reasoning already anticipated it would need to.
+
+**Also added `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO`** to `project.yml` while in
+there — declares the standard-HTTPS-only export-compliance exemption up front (accurate: every
+network dependency here — Supabase, Twilio, APNs — is system `URLSession`/TLS, nothing custom),
+so App Store Connect never interrupts a future build with the "does your app use encryption"
+prompt. Small, harmless to set now regardless of when the signing gate clears, and removes a
+recurring per-build friction point before it can ever happen.
+
+**Dropped the `IOS_BUNDLE_ID` secret the original Phase 0 stub comment guessed would be
+needed.** The bundle identifier is already fully specified in `project.yml`
+(`PRODUCT_BUNDLE_IDENTIFIER: com.stevenkinney.gottime`) — a project file already checked into
+git is the single source of truth for it, and a redundant CI secret duplicating an
+already-known, non-secret value would be pure surface area for the two to drift apart.
+
+**SETUP.md recommends the API key's "App Manager" role, not "Developer."** Checked this
+specifically rather than picking the obviously-narrower-sounding option: Developer can create
+builds but explicitly cannot manage TestFlight testers or submit for external review, both of
+which Phase 9's beta rollout will need. App Manager covers both from the start, avoiding a
+second key-creation walkthrough later just to widen its permissions.
+
+**Caught a real, necessary sequencing step before writing the owner instructions**: an App
+Store Connect *app record* (Apps → + → New App, choosing the already-registered bundle ID) has
+to be created manually, once, before any CI upload can succeed — confirmed via multiple
+independent reports of the exact failure ("no suitable application records were found")
+CI would hit otherwise. This isn't optional or automatable from a headless pipeline the way
+everything else in this job is; SETUP.md's walkthrough sequences it explicitly as Part B,
+before the API key secrets are used for a real run, specifically so the first real attempt
+doesn't fail on an undocumented prerequisite.
+
+**Confirmed the current GitHub token can't manage or read repository secrets at all**
+(`gh secret list` returns a 403, distinct from the Contents-scoped fine-grained PAT set up in
+Phase 0) before writing instructions that assumed otherwise. Rather than asking the owner to
+widen that token's permissions just to route Apple's private signing key through this session,
+SETUP.md has the owner paste all four values directly into GitHub's own secret-entry UI —
+strictly fewer hops for a sensitive credential, and it costs nothing since the next CI run's own
+log already shows whether the secrets were found, without needing read access to them at all.
