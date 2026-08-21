@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-20
 
-**Current phase: Phase 2 — Authentication (code done, CI-verified; blocked on 3 owner steps — see bottom)**
+**Current phase: Phase 3 — Connections (starting; no owner gate)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -32,20 +32,17 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 
 **Verified for real in CI, not just reviewed.** `ios-ci.yml` now runs on every push against a real `macos-latest` GitHub Actions runner: `GotTimeCore`'s and `GotTimeMocks`' test suites both pass, the app target compiles, and `GotTimeUITests` walks the entire canonical flow end to end on a real iOS Simulator — pick Chris, choose 5 minutes, explicit confirm, simulated ringing, auto-connect, live countdown, automatic termination at zero, "Done," and a new History entry recorded — all green. Getting there took real debugging, not just the initial build: six compile-time errors (a missing platform target, a timer-math test with a wrong expected value, four tests missing a buffered status event, a missing `import SwiftUI`, and a `deinit`-isolation error) and then a genuine runtime bug where the active-call screen never appeared after confirming a call. That last one took five serious attempts to root-cause — the first four all adjusted *how* SwiftUI's `.fullScreenCover`/`.sheet` presented the call screen and all failed identically, which turned out to be the tell: the fix was removing that presentation mechanism entirely in favor of a plain view-composition overlay, not tuning it further. Full blow-by-blow is in [DECISIONS.md](DECISIONS.md) for anyone curious, but the short version is: Phase 1 is done, and "done" here means a real compiler and a real Simulator agreed, not just careful reading.
 
-## Phase 2 — Authentication 🔄 code complete and CI-verified; blocked on 3 owner steps for real-world verification
+## Phase 2 — Authentication ✅ complete, verified against the real project
 - ✅ Supabase project created; credentials (Project URL, publishable key, secret key) received and stored in `.env` (gitignored) — the client-safe pieces (project ref + publishable key) also live in `ios/Config/AppConfig.xcconfig`, committed deliberately (see DECISIONS.md for why that one's safe to commit).
 - ✅ `SupabaseAuthAdapter` (`ios/App/Integrations/`) — real `AuthService` implementation: Sign in with Apple via `AuthenticationServices`, bridged into async/await; Supabase's auth-state stream bridged into `AuthState`, re-fetching the `profiles` row (not cached Apple/session metadata) as the source of truth for `first_name`.
 - ✅ `delete-account` Edge Function — deleting an account needs the service_role key (admin-only), so this is a new, tested (`deno test`, 2/2 passing) server-side endpoint the adapter calls, rather than something the client could do directly under RLS.
 - ✅ Supabase Swift SDK added as a dependency; `AppEnvironment.live()` wires real auth in, with connections/voice/history/push still mocked until their own phases (by design — see DECISIONS.md).
-- ✅ Release builds (TestFlight) always use the real backend; Debug/Simulator builds (CI, GotTimeUITests) default to mocked so nothing about the now-passing canonical-flow test changed. **Confirmed via a fresh `ios-ci.yml` run**: compiles clean, package resolution succeeds, and the mocked UI test still passes end to end.
-- 🚧 **3 owner steps still needed before this is testable against reality** (asked for in chat; not yet confirmed done — checked directly against the live project's REST API and the `profiles` table doesn't exist yet, confirming migrations haven't run):
-  1. Run the combined SQL script (sent as a file) in Supabase's SQL Editor, once.
-  2. Register an App ID (`com.stevenkinney.gottime`) with Sign in with Apple enabled, in the Apple Developer portal.
-  3. Enable and configure the Apple provider in Supabase's Authentication settings (Team ID/Key ID/private key already known to Claude Code, will need re-entering into Supabase's own form since Claude Code can't do that step directly).
-- Also genuinely can't be end-to-end tested (tapping "Sign in with Apple" on a real device and having it work) until Phase 4's signed TestFlight builds exist — that's an architectural fact, not a gap in this phase's work: real Sign in with Apple needs a real signed build, which is Phase 4's whole gate.
+- ✅ Release builds (TestFlight) always use the real backend; Debug/Simulator builds (CI, GotTimeUITests) default to mocked so nothing about the now-passing canonical-flow test changed. Confirmed via a fresh `ios-ci.yml` run: compiles clean, package resolution succeeds, and the mocked UI test still passes end to end.
+- ✅ All 3 owner setup steps done and **independently verified against the live project**, not just taken on the owner's word: all 5 tables exist via direct REST calls; RLS is actually active (an unauthenticated request against `profiles` correctly returns zero rows rather than an error or real data); `redeem_connection_invite()` exists and correctly rejects an unauthenticated call; and initiating a real Supabase auth request (`/auth/v1/authorize?provider=apple`) returns a proper redirect to `appleid.apple.com` with the correct `client_id=com.stevenkinney.gottime`, confirming the App ID registration, the Supabase Apple provider config, and the OAuth client-secret JWT (generated locally by reusing the same ES256-signing approach as the APNs helper, since Supabase's "Secret Key" field wants a signed token, not the raw `.p8` contents — see DECISIONS.md) are all correctly wired together end to end.
+- Still can't be tested by actually tapping "Sign in with Apple" on a device until Phase 4's signed TestFlight builds exist — that remains an architectural fact (native Sign in with Apple needs a real signed build), not a gap in this phase's work. Everything server-side and client-code-side that *can* be verified without a physical sign-in has been.
 
-## Phase 3 — Connections
-⬜ Not started.
+## Phase 3 — Connections 🔄 starting
+⬜ Not started yet this session, but no owner gate blocks it — the `connections`/`connection_invites` tables now exist on the real project, and the master plan's own note ("unauthorized-access tests run against the real project via two throwaway test users created through the Admin API — no real Apple ID needed") means this phase can be built and verified end to end autonomously.
 
 ## Phase 4 — Voice proof (the hard thing)
 ⬜ Not started. 🚧 Will need: Twilio account/billing/credentials; two physical iPhones; App Store Connect API key + Internal Testing group.
@@ -72,14 +69,11 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 2. ~~Apple Developer Program enrollment~~ — already enrolled
 3. ~~Sign-in-with-Apple Services ID/Key~~ — Team ID, Key ID, and private key supplied and stored
 4. ~~Supabase project~~ — created; Project URL, publishable key, and secret key supplied and stored
-
-## Owner steps now blocking (Phase 2 → Phase 3)
-Three small one-time setup steps, all explained in chat: run the combined SQL migration script
-in Supabase's SQL Editor; register the app's App ID with Sign in with Apple in the Apple
-Developer portal; enable and configure the Apple provider in Supabase's Authentication settings.
-None of these need new credentials — everything required for them was already supplied. Phase 3
-(Connections) also can't meaningfully start until the SQL script has run, since it needs the
-`connections`/`connection_invites` tables to exist on the real project.
+5. ~~SQL migration script run~~ — verified: all 5 tables + RLS live on the real project
+6. ~~App ID registered with Sign in with Apple~~ — verified via a real OAuth authorize request
+7. ~~Supabase Apple provider configured~~ — verified the same way; end-to-end wiring confirmed
 
 ## Owner gates still ahead
 See the table in the approved build plan / SETUP.md for the full list and what each requires.
+No owner gate blocks Phase 3 (Connections) — the next one is Phase 4's Twilio/physical-iPhone/
+App Store Connect trio.

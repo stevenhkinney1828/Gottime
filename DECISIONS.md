@@ -589,3 +589,29 @@ dependency-injected-logic-plus-thin-HTTP-wrapper pattern as `request-call`/`call
 (`logic.ts` takes the acting user's *own* verified ID, never a client-supplied one, so this can
 only ever delete the account making the request) — tested locally (`deno test`/`lint`/`fmt`, all
 clean) the same way those were before ever depending on a live project.
+
+**Supabase's Apple-provider "Secret Key (for OAuth)" field wants a signed JWT, not the raw
+`.p8` file contents** — this only became clear from the owner's screenshot of the actual current
+form, which has a single "Secret Key" field rather than the separate Team ID/Key ID/Private Key
+inputs an earlier (incorrect) instruction assumed. Apple's Sign-in-with-Apple OAuth client
+secret is itself a short-lived-by-design ES256 JWT (`iss` = Team ID, `sub` = the client/bundle
+ID, `aud` = `https://appleid.apple.com`, `exp` ≤ 6 months from `iat`) that has to be generated,
+not typed in. Rather than walking a non-technical owner through generating a JWT by hand,
+reused the exact ES256-signing approach already written and tested for APNs
+(`supabase/functions/_shared/apnsJwt.ts`) in a one-off local script, then handed over just the
+resulting token string to paste into that one field. Verified correctness two ways before
+handing it over: decoded the JWT's own payload to confirm the claims, and — after the owner
+saved it — issued a real `/auth/v1/authorize?provider=apple` request against the live project
+and confirmed it 302-redirects to `appleid.apple.com` with the right `client_id`, which only
+happens if the App ID, the Supabase provider config, and this secret are all correctly wired
+together. Set to expire 2027-02-19 (Apple's 6-month maximum) — needs regenerating before then,
+the same way the APNs provider token pattern already documents needing periodic rotation.
+
+**Verified all 3 owner setup steps directly against the real project rather than trusting the
+owner's "done" at face value** — matches the same discipline used throughout Phase 0/1 (checking
+CI results rather than assuming code compiles, checking `git status` rather than assuming a
+commit succeeded). Confirmed the 5 tables exist, RLS is actually enforcing (not just present:
+an anon-key request against `profiles` returns `[]`, not real rows or an error), and the Apple
+OAuth wiring works end to end, all via direct API calls — the only thing left genuinely
+unverifiable without a physical device is a real human tapping "Sign in with Apple" and
+completing it, which needs Phase 4's signed build to even attempt.
