@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-20
 
-**Current phase: Phase 3 — Connections (starting; no owner gate)**
+**Current phase: Phase 4 — Voice proof (blocked on a 3-part owner gate — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -41,11 +41,22 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ All 3 owner setup steps done and **independently verified against the live project**, not just taken on the owner's word: all 5 tables exist via direct REST calls; RLS is actually active (an unauthenticated request against `profiles` correctly returns zero rows rather than an error or real data); `redeem_connection_invite()` exists and correctly rejects an unauthenticated call; and initiating a real Supabase auth request (`/auth/v1/authorize?provider=apple`) returns a proper redirect to `appleid.apple.com` with the correct `client_id=com.stevenkinney.gottime`, confirming the App ID registration, the Supabase Apple provider config, and the OAuth client-secret JWT (generated locally by reusing the same ES256-signing approach as the APNs helper, since Supabase's "Secret Key" field wants a signed token, not the raw `.p8` contents — see DECISIONS.md) are all correctly wired together end to end.
 - Still can't be tested by actually tapping "Sign in with Apple" on a device until Phase 4's signed TestFlight builds exist — that remains an architectural fact (native Sign in with Apple needs a real signed build), not a gap in this phase's work. Everything server-side and client-code-side that *can* be verified without a physical sign-in has been.
 
-## Phase 3 — Connections 🔄 starting
-⬜ Not started yet this session, but no owner gate blocks it — the `connections`/`connection_invites` tables now exist on the real project, and the master plan's own note ("unauthorized-access tests run against the real project via two throwaway test users created through the Admin API — no real Apple ID needed") means this phase can be built and verified end to end autonomously.
+## Phase 3 — Connections ✅ complete, verified against the real project
+- ✅ `SupabaseConnectionAdapter` (`ios/App/Integrations/`) — real `ConnectionService`: `fetchConnections`/`createInvite`/`redeemInvite`/`removeConnection` against the real `connections`/`connection_invites` tables and the `redeem_connection_invite()` RPC. No UI changes needed — `AddConnectionView`/`PeopleListView` already called the protocol generically, so the real adapter drops in without touching view code.
+- ✅ Invite-code generation promoted to `GotTimeCore.InviteCodeGenerator` (with tests), shared between the mock and the real adapter rather than duplicated.
+- ✅ Confirmed via a fresh `ios-ci.yml` run: compiles clean, mocked UI test still passes end to end.
+- ✅ **The whole security model verified live against the real project**, exactly as the build plan called for: `backend/scripts/verify-connections-rls.ts` creates three throwaway users through the Admin API (no real Apple ID needed), then as real authenticated requests — Alice creates an invite, Bob redeems it, both can then see each other's profile, a third unconnected user (Carol) sees neither the profile nor the connection, redeeming an already-redeemed code fails, and redeeming your own invite fails. All 8 checks passed on the first real run; cleanup of all three throwaway users independently confirmed afterward via a follow-up Admin API listing, not just assumed. Script is committed and re-runnable, not a one-off — see `backend/README.md`.
 
-## Phase 4 — Voice proof (the hard thing)
-⬜ Not started. 🚧 Will need: Twilio account/billing/credentials; two physical iPhones; App Store Connect API key + Internal Testing group.
+## Phase 4 — Voice proof (the hard thing) 🚧 blocked on owner gate for the real thing
+⬜ Not started — this is the phase real two-way voice calling actually gets built and proven,
+and reaching that point needs three things from the owner (see bottom of this file for the
+plain-language ask): a Twilio account with billing set up; two physical iPhones on hand; and an
+App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight
+build. What *doesn't* need those: the Edge Functions' own request-validation/response-shaping
+logic (`issue-voice-token`, `twiml-voice`, `twilio-status-callback`) can be built and unit-tested
+against a dependency-injected fake Twilio client the same way `request-call`/`call-action` were
+built before a real Supabase project existed — planned as the next piece of autonomous prep
+while the owner works through the gate below.
 
 ## Phase 5 — CallKit / PushKit
 ⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).
@@ -73,7 +84,16 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 6. ~~App ID registered with Sign in with Apple~~ — verified via a real OAuth authorize request
 7. ~~Supabase Apple provider configured~~ — verified the same way; end-to-end wiring confirmed
 
-## Owner gates still ahead
-See the table in the approved build plan / SETUP.md for the full list and what each requires.
-No owner gate blocks Phase 3 (Connections) — the next one is Phase 4's Twilio/physical-iPhone/
-App Store Connect trio.
+## Owner gate now blocking (Phase 4)
+Three things, all needed before real two-way voice calling can be built and proven:
+1. **A Twilio account** with billing/a payment method attached (pay-as-you-go — trial accounts
+   have restrictions that would confuse testing). Once created, share the Account SID, Auth
+   Token, and (after creating an API Key in the console) the API Key SID + Secret.
+2. **Two physical iPhones** on hand — this is the one thing with no software substitute; the
+   whole point of this phase is proving a real call works between two real devices.
+3. **An App Store Connect API key + an Internal Testing group** set up in App Store Connect, so
+   CI can sign a real build and upload it to TestFlight automatically. See SETUP.md for the
+   walkthrough once ready to set this up.
+
+See the table in the approved build plan / SETUP.md for the full list beyond this and what each
+requires.
