@@ -185,11 +185,13 @@ in App Store Connect — Claude Code will let you know once a push succeeds):
 3. Under **Internal Testing**, click the **+** next to it (or "Create Group" if that's what
    you see).
 4. Name the group anything, e.g. `Family Testers`.
-5. Check the box for yourself (and anyone else on your Apple Developer account team you want
-   testing early) as a tester in that group.
-6. Look for a toggle or setting like **"Automatically distribute builds"** and make sure it's
-   turned on — that way every new build Claude Code's pipeline uploads shows up on your phone
-   automatically, without you having to come back here and approve each one by hand.
+5. Turn on the toggle for **"Automatically distribute builds"** — that way every new build
+   Claude Code's pipeline uploads shows up on your phone automatically, with nothing more to
+   click each time.
+6. Adding yourself as a tester is a separate step from creating the group, not part of the same
+   screen — this is normal, not a sign anything's missing. After the group exists, look for
+   a way to **add a tester** (a button on the group's own page, sometimes on the next screen
+   after creation) — that's where the checkbox with your name actually lives.
 7. Install the **TestFlight** app from the real App Store on your iPhone (if you don't have it
    already) — that's where the actual GotTime builds will show up once uploaded.
 
