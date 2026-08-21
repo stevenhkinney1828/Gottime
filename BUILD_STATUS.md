@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-21
 
-**Current phase: Phase 4 — Voice proof (backend done and verified live; TwilioVoiceAdapter built and wired in, CI verification in progress; 2-part owner gate remains for real device testing — see bottom)**
+**Current phase: Phase 4 — Voice proof (backend and iOS sides both done and CI-verified; 2-part owner gate remains for real device testing — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -57,7 +57,7 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ **The entire voice-token pipeline verified end to end with a real authenticated user and real Twilio credentials**: created a throwaway test user, signed in, called the live `issue-voice-token` function, and got back a genuine Twilio Voice Access Token with the real TwiML App SID embedded and the correct identity — not just passing unit tests against fake credentials.
 - ✅ **`TwilioVoiceAdapter` built** (`ios/App/Integrations/`) — real `VoiceService`: `startCall` requests a `call_sessions` row server-side first (`request-call`), mints a fresh Access Token (`issue-voice-token`), then connects through the Twilio Voice SDK, embedding the session id as the call's `callSessionId` param for `twiml-voice` to route on. Every `CallDelegate` callback funnels through the same `CallStateMachine.apply` transition rules `MockVoiceService` already uses. `answer`/`decline` are wired to a `pendingInvite`, populated by a plain method not yet called from anywhere — receiving a real incoming call needs Phase 5's PushKitAdapter first, which doesn't change anything about this adapter once it exists. Twilio Voice iOS SDK added as an SPM dependency (6.13.x); `AppEnvironment.live()` now constructs this adapter for `voiceService`, graduating it alongside the already-live `authService`/`connectionService`.
 - ✅ **Caught a real decoding gap before it could surface on a device**: `FunctionsClient`'s default JSON decoder (unlike `PostgrestClient`'s) doesn't parse ISO 8601 date strings, which would have made the adapter's `request-call` response fail to decode its three timestamp fields. Fixed by passing an explicit custom decoder, verified against the SDK's actual `invoke(_:options:decoder:)` signature before relying on it. See DECISIONS.md for the full reasoning.
-- 🔄 Pushed for CI verification that the new SPM dependency resolves and the whole App target (including this new file) actually builds — result pending, this line will be updated once it lands.
+- ✅ **Confirmed via a real `ios-ci.yml` run, not just a local read-through**: the new Twilio Voice SDK SPM dependency resolves, the whole App target (including `TwilioVoiceAdapter.swift`) builds clean, and GotTimeUITests' mocked canonical-flow test still passes unaffected — Debug still defaults to `.mock()`, so this graduation was invisible to that test by design. The signing job's own guard correctly no-op'd (no Apple credentials configured yet), exactly as designed since Phase 0.
 - 🚧 Still needed before a real two-way call can be tested: two physical iPhones, and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build.
 
 ## Phase 5 — CallKit / PushKit

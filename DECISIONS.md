@@ -874,6 +874,9 @@ graduating it alongside the already-live `authService`/`connectionService`; `cal
 `pushService` remain mocked until Phase 5 for the same PushKit-dependency reason above. Debug
 still defaults to `.mock()` (GotTimeUITests' canonical-flow test is unaffected by this
 graduation by design), the same Release-always-live/Debug-opt-in split established in Phase 2.
-Pushed for `ios-ci.yml` to confirm the new SPM dependency actually resolves and the whole App
-target still builds — this entry will be amended if that run surfaces anything the read-through
-above missed.
+
+**Confirmed via a real `ios-ci.yml` run, not just the read-through above**: the new Twilio Voice
+SDK SPM package (a binary XCFramework) resolves cleanly, the whole App target compiles with
+`TwilioVoiceAdapter.swift` included, and GotTimeUITests' mocked canonical-flow test still passes
+unchanged. The signing job's existing secret-existence guard correctly no-op'd its archive step,
+exactly as designed since Phase 0 — no Apple signing credentials exist yet.
