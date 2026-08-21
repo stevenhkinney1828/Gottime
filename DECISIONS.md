@@ -1054,3 +1054,46 @@ error, which blocks ever seeing the permission error) — exactly what "no fake 
 in for Apple's real signing authority" (stated when this job was first written) predicted, just
 playing out over several rounds instead of one. Each root-caused from the real error text plus
 external verification before applying a fix, not from repeated guessing.
+
+## Fourth finding: no app icon at all, and an iPad-multitasking orientation rejection
+
+The Admin-role key fix worked completely — "Cloud signing permission error" is gone, and the
+build got far enough to actually reach Apple's server-side validation (`The server's response
+was: ...`), a fundamentally different, much more mundane category of problem than the three
+infrastructure/credential issues above. Real errors: missing 152×152 and 120×120 app icons,
+missing `CFBundleIconName`, and a rejected Portrait-only orientation declaration ("you need to
+include all... orientations to support iPad multitasking").
+
+**Root cause of the icon errors: this project never had an app icon at all.**
+`ios/App/Resources/` was completely empty — nothing before a real App Store Connect submission
+would ever catch this, since Simulator builds and tests never validate icon completeness.
+Generated a real, functional placeholder rather than leaving this blocked on Phase 8's visual
+design pass (App Store Connect rejects *any* upload without one, even for Internal Testing —
+this genuinely couldn't wait): a simple stopwatch glyph in `gtAccent`
+(`Color+GotTime.swift`'s exact light-mode value, `#B86B52`), rendered via `sharp` (installed
+into a scratch directory, not the repo) from an inline SVG to a single 1024×1024 PNG, using the
+modern single-size `AppIcon.appiconset` format (Xcode derives every smaller size itself — no
+need to hand-generate a dozen exact pixel sizes). Explicitly flattened to remove the alpha
+channel (`hasAlpha: false` confirmed before use) — the 1024×1024 marketing icon specifically
+must have none; a visually-opaque-but-technically-RGBA file still fails validation. Wired in via
+`ASSETCATALOG_COMPILER_APPICON_NAME`/`INFOPLIST_KEY_CFBundleIconName` on the `GotTime` target
+(not project-wide — `GotTimeUITests` has no reason to need one). This is a functional
+placeholder, not a design decision — flagged here so Phase 8 doesn't mistake it for a real
+branding choice already made.
+
+**Orientation fix carries a real, deliberately-accepted trade-off, not just a validator
+formality.** The straightforward fix — also declaring all 4 orientations on the base
+(non-suffixed) `INFOPLIST_KEY_UISupportedInterfaceOrientations` key, not just the `~ipad`-
+suffixed one already present — genuinely changes iPhone runtime behavior: it actually allows
+the app to rotate to landscape/upside-down on a real phone, which the original Portrait-only
+declaration didn't. Checked before accepting this: no `GeometryReader` or fixed-size
+absolute-positioning layouts anywhere under `App/Features/` that would visually break in
+landscape — every `.frame(width:...)` hit is a small decorative element (avatar circles, icon
+buttons), not a screen-dependent layout. Accepted the trade-off rather than chase a more
+surgical fix (e.g., confirming whether XcodeGen's `INFOPLIST_KEY_*~ipad` idiom-suffix synthesis
+was even taking effect at all) given the actual stakes: this is a placeholder build for internal
+family testing of core calling functionality, Phase 8 already exists to revisit exactly this
+kind of polish, and every further guess costs a real CI round-trip. **Revisit in Phase 8**: lock
+back to portrait-only on iPhone once the real reason the `~ipad`-only key wasn't sufficient on
+its own is understood, rather than carrying this broader-than-intended declaration forward
+by default.

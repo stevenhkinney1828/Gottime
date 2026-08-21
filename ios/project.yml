@@ -33,7 +33,13 @@ settings:
     CODE_SIGNING_ALLOWED: NO
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_UILaunchScreen_Generation: YES
-    INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    # App Store Connect validation rejected a Portrait-only declaration even though
+    # TARGETED_DEVICE_FAMILY is iPhone-only (below), citing iPad multitasking's
+    # all-4-orientations requirement — the ~ipad-suffixed key alone wasn't enough to satisfy
+    # it, so the base (non-suffixed) key now also lists all 4. Functionally harmless either
+    # way since this app never runs on iPad at all; found from a real rejected-upload error,
+    # not anticipated ahead of time.
+    INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_CFBundleDisplayName: "GotTime?"
     # Declares the standard-HTTPS-only encryption exemption up front so App Store Connect
@@ -84,6 +90,13 @@ targets:
         # here if that registration ever needs a different bundle ID.
         INFOPLIST_KEY_GTSupabaseProjectRef: "$(GT_SUPABASE_PROJECT_REF)"
         INFOPLIST_KEY_GTSupabaseAnonKey: "$(GT_SUPABASE_ANON_KEY)"
+        # AppIcon.appiconset (App/Resources/Assets.xcassets) — a real functional placeholder
+        # (simple stopwatch glyph in the app's actual gtAccent color), not final branding.
+        # App Store Connect rejects any upload with no icon at all, even for Internal Testing,
+        # so this couldn't wait for Phase 8's visual polish pass — found from a real rejected
+        # upload, see DECISIONS.md.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleIconName: AppIcon
 
   GotTimeUITests:
     type: bundle.ui-testing
