@@ -654,3 +654,20 @@ would just be copy-paste risk with no offsetting benefit.
 makes `.single()` available after `.rpc(...)`) was checked against the v2.55.1 source before
 writing code against it** — same discipline as Phase 2, for the same reason: a wrong signature
 here only surfaces after a full CI round trip.
+
+**Verified the whole connection/invite security model live, via `backend/scripts/
+verify-connections-rls.ts`, not just by reading the RLS policies again.** Follows the build
+plan's own instruction for this phase exactly: three throwaway users created through the Admin
+API (no real Apple ID needed), run through the actual flow as real authenticated HTTP requests
+against the real project — Alice creates an invite, Bob redeems it, both can then see each
+other's profile, a third unconnected user (Carol) can see neither profile and zero connections,
+redeeming an already-redeemed code fails, and redeeming your own invite fails. All 8 checks
+passed on the first real run; all three throwaway users were deleted afterward and their
+removal was independently confirmed via a follow-up Admin API listing, not assumed from the
+script's own exit code. Kept as a committed, re-runnable script (not a scratchpad one-off)
+specifically so it can be run again after any future change to `connections`/
+`connection_invites` RLS to confirm the *deployed* project — not just the migration files —
+still behaves correctly; not wired into CI as an automated gate yet, since that would need
+Supabase secrets added to GitHub Actions and failure-safe cleanup guarantees beyond what a
+manually-invoked local script needs, which is a separate, larger decision than this phase's
+sign-off required.
