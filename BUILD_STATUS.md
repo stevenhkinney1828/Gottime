@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-21
 
-**Current phase: Phase 4 — Voice proof (all code written; owner gate cleared; first real signing run found one fixable credential issue, fix in the owner's hands now — see bottom)**
+**Current phase: Phase 4 — Voice proof (a real signed build has reached TestFlight for the first time; only the two-iPhone device test and setting up an Internal Testing group remain — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -58,10 +58,7 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ **`TwilioVoiceAdapter` built** (`ios/App/Integrations/`) — real `VoiceService`: `startCall` requests a `call_sessions` row server-side first (`request-call`), mints a fresh Access Token (`issue-voice-token`), then connects through the Twilio Voice SDK, embedding the session id as the call's `callSessionId` param for `twiml-voice` to route on. Every `CallDelegate` callback funnels through the same `CallStateMachine.apply` transition rules `MockVoiceService` already uses. `answer`/`decline` are wired to a `pendingInvite`, populated by a plain method not yet called from anywhere — receiving a real incoming call needs Phase 5's PushKitAdapter first, which doesn't change anything about this adapter once it exists. Twilio Voice iOS SDK added as an SPM dependency (6.13.x); `AppEnvironment.live()` now constructs this adapter for `voiceService`, graduating it alongside the already-live `authService`/`connectionService`.
 - ✅ **Caught a real decoding gap before it could surface on a device**: `FunctionsClient`'s default JSON decoder (unlike `PostgrestClient`'s) doesn't parse ISO 8601 date strings, which would have made the adapter's `request-call` response fail to decode its three timestamp fields. Fixed by passing an explicit custom decoder, verified against the SDK's actual `invoke(_:options:decoder:)` signature before relying on it. See DECISIONS.md for the full reasoning.
 - ✅ **Confirmed via a real `ios-ci.yml` run, not just a local read-through**: the new Twilio Voice SDK SPM dependency resolves, the whole App target (including `TwilioVoiceAdapter.swift`) builds clean, and GotTimeUITests' mocked canonical-flow test still passes unaffected — Debug still defaults to `.mock()`, so this graduation was invisible to that test by design. The signing job's own guard correctly no-op'd (no Apple credentials configured yet), exactly as designed since Phase 0.
-- 🔄 **`ios-ci.yml`'s `sign-and-upload` job implemented; owner gate cleared; first real run found one real bug, fix in progress.** Owner created the App Store Connect API key, registered the app record (as "GotTime? Calling" — the exact name "GotTime?" was already taken globally on the App Store; the actual on-device name, `CFBundleDisplayName`, is unaffected), and saved all four secrets. The first real run's **Archive** step failed with `CryptoKitASN1Error.invalidPEMDocument` — the saved `.p8` key content doesn't parse as valid PEM, almost certainly a copy-paste artifact from Notepad. This is exactly the "at least one round of real iteration" flagged as likely when this job was written, not a design flaw in the pipeline itself. Fix given to the owner: re-copy the key via `Get-Content -Raw | Set-Clipboard` in PowerShell (avoids manual visual copy-paste entirely) and update just that one secret. See DECISIONS.md for the full diagnosis.
-- ✅ PEM fix confirmed correct — the retry's **Archive** step got measurably further (real package resolution and compilation) before hitting a *different* real issue: automatic signing was defaulting to a Development-only profile, which needs a registered device this account doesn't have. Fixed with two build-setting additions (`CODE_SIGN_IDENTITY=-`, `AD_HOC_CODE_SIGNING_ALLOWED=YES`); confirmed on the next retry — **Archive now succeeds outright**, the furthest this pipeline has ever gotten.
-- ✅ Admin-role key fix confirmed correct too — `Cloud signing permission error` is gone entirely; the next retry got all the way to Apple's own server-side validation (a fundamentally different, much more mundane category of problem than the three infrastructure/credential issues before it).
-- 🔄 **Fourth finding: no app icon existed anywhere in this project.** `ios/App/Resources/` was completely empty — nothing before a real submission attempt would ever catch this. Generated a real (if intentionally simple) placeholder icon — a stopwatch glyph in the app's actual `gtAccent` color — via a small script, wired into a new `Assets.xcassets/AppIcon.appiconset`. Also fixed a rejected orientation declaration (Apple's validator wanted all 4 orientations for iPad-multitasking compliance even though this app is iPhone-only) — accepted a real, minor trade-off here: iPhone rotation is now technically allowed, whereas before it was Portrait-only; checked the actual view code first and found nothing that would visually break in landscape, and flagged this for a proper look during Phase 8's visual polish pass rather than chasing a more surgical fix now. Pushed; retry pending. See DECISIONS.md for the full four-finding sequence.
+- ✅ **`ios-ci.yml`'s `sign-and-upload` job fully implemented and verified working end to end — a real signed GotTime build has reached TestFlight for the first time.** Getting here took four real, previously-unverifiable issues, each only reachable after fixing the last (no fake credential can stand in for Apple's actual signing infrastructure, so each one only surfaced on an actual attempt): an invalid `.p8` key (a Notepad copy-paste artifact), automatic signing defaulting to a Development-only profile (needs a registered device this account doesn't have), the API key needing Admin-level access rather than App Manager (cloud-managed signing specifically requires it), and this project never having had an app icon at all (fixed with a real placeholder — a stopwatch glyph in the app's actual `gtAccent` color — plus a related orientation-declaration fix). Every fix was root-caused from the real CI error text and cross-checked against current documentation before applying, never guessed. Full round-by-round account in DECISIONS.md.
 - 🚧 Two physical iPhones still needed too, for the actual two-way call test once a signed build reaches TestFlight.
 
 ## Phase 5 — CallKit / PushKit
@@ -90,19 +87,21 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 6. ~~App ID registered with Sign in with Apple~~ — verified via a real OAuth authorize request
 7. ~~Supabase Apple provider configured~~ — verified the same way; end-to-end wiring confirmed
 8. ~~Twilio account + billing~~ — created, funded, Account SID/Auth Token/API Key SID+Secret supplied and stored; TwiML Application created and verified issuing real tokens
+9. ~~App Store Connect API key + app record~~ — Admin-role Team API key created, app registered as "GotTime? Calling", all four secrets saved; **CI now genuinely signs and uploads a real build to TestFlight, verified by an actual successful run**, not just by the pipeline existing.
 
 ## Owner gate now blocking (Phase 4)
-Two things left, both needed before real two-way voice calling can be tested for real:
+Two things left before real two-way voice calling can be tested for real:
 1. **Two physical iPhones** on hand — this is the one thing with no software substitute; the
    whole point of this phase is proving a real call works between two real devices.
-2. **An App Store Connect API key + an Internal Testing group** set up in App Store Connect, so
-   CI can sign a real build and upload it to TestFlight automatically. See SETUP.md for the
-   click-by-click walkthrough — this is genuinely the next thing to do.
+2. **An Internal Testing group**, set up once in App Store Connect, so those two iPhones can
+   actually install the build that's already sitting in TestFlight. See SETUP.md ("Part C") for
+   the click-by-click walkthrough — this is genuinely the next thing to do, and unlike
+   everything above it, it's pure App Store Connect UI clicking with no CI/credential
+   uncertainty left in it.
 
-Every piece of code that doesn't strictly need either of those has now been built without
-waiting — `TwilioVoiceAdapter` and `ios-ci.yml`'s full sign-and-upload pipeline, see Phase 4
-above. What's left in this phase is genuinely gated on both: no local or CI-only path can sign a
-real build or exercise a real two-way call.
+Every piece of code has now been built and verified working without waiting on either of
+those — `TwilioVoiceAdapter` and `ios-ci.yml`'s full sign-and-upload pipeline are both done and
+proven, see Phase 4 above. What's left in this phase is purely the two-iPhone device test itself.
 
 See the table in the approved build plan / SETUP.md for the full list beyond this and what each
 requires.

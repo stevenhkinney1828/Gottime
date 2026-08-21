@@ -1097,3 +1097,20 @@ kind of polish, and every further guess costs a real CI round-trip. **Revisit in
 back to portrait-only on iPhone once the real reason the `~ipad`-only key wasn't sufficient on
 its own is understood, rather than carrying this broader-than-intended declaration forward
 by default.
+
+## Sign-and-upload pipeline fully verified: a real signed build reached TestFlight
+
+The icon/orientation fix worked — the next run's `Sign & upload to TestFlight` job succeeded
+completely, every step, for the first time. **A real, signed GotTime build now exists on
+TestFlight.** Five real attempts, four distinct root causes, each only discoverable by actually
+hitting real Apple infrastructure (invalid PEM → wrong profile type → wrong API key role →
+missing icon/orientation) — exactly what was anticipated when this job was first written
+("there is no local or fake way to test xcodebuild signing flags at all"), just taking several
+rounds instead of the "at least one" originally guessed. Every round was root-caused from the
+actual CI error text plus external verification before applying a fix — never a repeated guess
+at the same problem, and each fix stuck on the first real retry once correctly diagnosed.
+
+This closes out the last piece of Phase 4 that was ever code-shaped. What remains — the
+two-iPhone device test itself, and creating an Internal Testing group so those phones can
+install the build already sitting in TestFlight — is pure device/UI action with no remaining
+engineering uncertainty in the pipeline underneath it.
