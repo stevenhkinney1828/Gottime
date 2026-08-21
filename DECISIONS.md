@@ -977,3 +977,39 @@ app's visibility to specifically-chosen team members, useful for a multi-person 
 several apps; it has no benefit for a one-person account, and choosing it risks the CI signing
 key needing a separate, explicit per-app access grant just to see the app — the same category
 of avoidable first-run failure as the app-record-creation-order issue above.
+
+**The app's real display name collided with an existing App Store listing** ("GotTime?" was
+already taken globally — Apple enforces this across the entire store, not per-account). Fixed
+by using "GotTime? Calling" for App Store Connect's own "Name" field specifically — this field
+is distinct from `INFOPLIST_KEY_CFBundleDisplayName` (already "GotTime?", untouched, and the
+only thing anyone actually sees on a home screen or inside TestFlight before the app is ever
+publicly released), so nothing built earlier needed to change.
+
+## First real `sign-and-upload` run: found a genuine, previously-unverifiable bug
+
+With all four secrets saved and the app record created, triggered the first real run (via a
+small, honestly-motivated doc commit — the current GitHub token can dispatch neither
+`workflow_dispatch` runs, confirmed via a 403, nor read secrets, so a real push is the only
+trigger mechanism available). Exactly as flagged when this job was written: the **Archive**
+step failed on its first real attempt, since there was never any way to test this ahead of a
+real key existing.
+
+**Root cause, from the actual error text** (`CryptoKit.CryptoKitASN1Error.invalidPEMDocument`,
+from `xcodebuild`'s own `-authenticationKeyPath` validation): the `.p8` file's content, as saved
+in the `APP_STORE_CONNECT_API_KEY_P8` secret, doesn't parse as a valid PEM document. This is a
+local parsing failure that happens before any network call to Apple, which rules out a wrong
+Key ID/Issuer ID/Team ID (those would surface as a rejected authentication *request*, not a
+malformed-credential error caught locally) — it isolates the problem specifically to how the
+`.p8` file's contents made it into that one secret. The most likely cause is exactly the kind of
+thing manual copy-paste through Notepad is prone to: a missed line, extra whitespace, or an
+altered line break silently breaking PEM's strict line-structure requirements.
+
+**Fix given to the owner deliberately avoids manual visual copy-paste a second time**, rather
+than just asking them to redo the same fallible steps: drag the `.p8` file directly into a
+PowerShell window after typing `Get-Content ` (auto-fills the exact quoted path, no typing a
+filename required) and pipe it through `-Raw | Set-Clipboard` — this reproduces the file's exact
+bytes onto the clipboard with no manual selection step for anything to go wrong in, then update
+(not recreate) just the one secret. Deliberately kept this entirely an owner-executed local
+operation rather than piping the key's contents through this session at all, even transiently —
+consistent with the earlier reasoning that the fewer hops a private signing key passes through,
+the better.
