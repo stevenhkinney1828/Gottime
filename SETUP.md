@@ -150,7 +150,14 @@ cloud Mac's very first upload attempt can succeed at all):
 
 1. In App Store Connect, go to **Apps** → click the **+** → **New App**.
 2. **Platform:** iOS.
-3. **Name:** `GotTime?` (or anything you'd like testers to see — this can be changed later).
+3. **Name:** `GotTime?` — but this exact name is very likely already taken. Apple requires this
+   field to be unique across every app in the *entire* App Store, not just your own account, so
+   this has nothing to do with anything being wrong on your end. If it's rejected, just add a
+   word — `GotTime? Calling` works well. **This is a different field from the name that
+   actually shows on your phone's home screen** (that's already set in the app's code and is
+   completely unaffected by whatever you type here) — and it can be changed again later in App
+   Store Connect any time before the app is ever submitted for real App Store review (Phase 9),
+   so there's no need to deliberate over it now.
 4. **Primary Language:** English (or your preference).
 5. **Bundle ID:** choose `com.stevenkinney.gottime` from the dropdown — it's already there from
    the Sign in with Apple setup back in an earlier step, nothing new to register.
