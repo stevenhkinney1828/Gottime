@@ -155,7 +155,12 @@ cloud Mac's very first upload attempt can succeed at all):
 5. **Bundle ID:** choose `com.stevenkinney.gottime` from the dropdown — it's already there from
    the Sign in with Apple setup back in an earlier step, nothing new to register.
 6. **SKU:** any internal label only you ever see, e.g. `gottime001`.
-7. Leave **User Access** as-is, then click **Create**.
+7. **User Access:** choose **Full Access**, not "Limited Access." Limited Access exists for
+   teams who want to hide an app from some of their own members — it has no benefit for a
+   one-person account, and choosing it risks the CI signing key needing a separate, extra
+   access grant just to see the app at all. (Some solo accounts don't even get a real choice
+   here — this may already show as locked to Full Access, which is fine.)
+8. Click **Create**.
 
 Do this, and save the four secrets in Part A, before telling Claude Code you're ready — the
 signing/upload code is already written and pushed, so Claude Code can trigger a fresh run

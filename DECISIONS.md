@@ -969,3 +969,11 @@ widen that token's permissions just to route Apple's private signing key through
 SETUP.md has the owner paste all four values directly into GitHub's own secret-entry UI —
 strictly fewer hops for a sensitive credential, and it costs nothing since the next CI run's own
 log already shows whether the secrets were found, without needing read access to them at all.
+
+**SETUP.md recommends "Full Access," not "Limited Access," for the new app record's "User
+Access" setting** — this owner question came up directly, and checked rather than guessed
+before answering (the first draft had hedged with "leave as-is"). Limited Access restricts an
+app's visibility to specifically-chosen team members, useful for a multi-person team managing
+several apps; it has no benefit for a one-person account, and choosing it risks the CI signing
+key needing a separate, explicit per-app access grant just to see the app — the same category
+of avoidable first-run failure as the app-record-creation-order issue above.
