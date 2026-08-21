@@ -5,12 +5,13 @@ import GotTimeMocks
 import Supabase
 
 /// The five services the whole app is built against, injected via SwiftUI's environment.
-/// `.live()` (Phase 2+) uses real adapters under App/Integrations/ where they exist and falls
-/// back to GotTimeMocks for the rest — not every service needs to graduate at once for this to
-/// be useful, e.g. Phase 2 only needs `authService` real to be testable end to end against
-/// Supabase. `.mock()` remains the default (see GotTimeApp.swift) so GotTimeUITests, Xcode
-/// Previews, and casual runs stay exactly as they were; `.live()` is opt-in via the
-/// GOTTIME_USE_LIVE_BACKEND launch-environment variable.
+/// `.live()` uses real adapters under App/Integrations/ where they exist and falls back to
+/// GotTimeMocks for the rest — not every service needs to graduate at once for this to be
+/// useful: Phase 2 graduated `authService`, Phase 3 `connectionService`; `voiceService`/
+/// `callHistoryService`/`pushService` stay mocked until Phases 4/5. `.mock()` remains the
+/// default (see GotTimeApp.swift) so GotTimeUITests, Xcode Previews, and casual runs stay
+/// exactly as they were; `.live()` is opt-in via the GOTTIME_USE_LIVE_BACKEND launch-environment
+/// variable in Debug, and always-on in Release.
 struct AppEnvironment {
     let authService: any AuthService
     let connectionService: any ConnectionService
@@ -47,7 +48,7 @@ extension AppEnvironment {
         let client = SupabaseClientFactory.makeClient()
         return AppEnvironment(
             authService: SupabaseAuthAdapter(client: client),
-            connectionService: mockEnv.connectionService,
+            connectionService: SupabaseConnectionAdapter(client: client),
             voiceService: mockEnv.voiceService,
             callHistoryService: mockEnv.callHistoryService,
             pushService: mockEnv.pushService

@@ -615,3 +615,42 @@ an anon-key request against `profiles` returns `[]`, not real rows or an error),
 OAuth wiring works end to end, all via direct API calls — the only thing left genuinely
 unverifiable without a physical device is a real human tapping "Sign in with Apple" and
 completing it, which needs Phase 4's signed build to even attempt.
+
+## Phase 3: real Connections wiring
+
+**Promoted invite-code generation to `GotTimeCore.InviteCodeGenerator`, out of
+`MockConnectionService`.** `SupabaseConnectionAdapter` needs the exact same code-generation
+logic the mock already had (a 6-character code from an alphabet that excludes visually
+ambiguous characters — I/O/0/1), since the database has no server-side default for
+`invite_code`; the client always supplies it. This is genuine duplication across two real,
+concrete call sites, not a speculative "might need this later" abstraction, so sharing it was
+the right call rather than three near-identical lines in each adapter.
+
+**`fetchConnections()` does two round-trips (connections, then profiles), not one PostgREST
+embed query.** PostgREST can embed both `user_a`/`user_b` profile relationships in one request,
+but only by naming the underlying foreign-key constraints explicitly
+(`connections_user_a_id_fkey`/`connections_user_b_id_fkey`), which is implicit, easy to silently
+break on a future migration change, and saves one round trip for a screen that's realistically
+never fetching more than a handful of rows. Two simple, robust queries over one fragile, faster
+one.
+
+**`createInvite()` retries only on an actual Postgres unique_violation (`PostgrestError.code ==
+"23505"`), up to 3 attempts, and re-throws the real error explicitly on the final failure**
+rather than letting it propagate past the loop implicitly (an earlier draft's `where` guard
+would have let that happen accidentally instead of on purpose — same category of bug as the
+`AuthChangeEvent` switch gap: verify what actually happens on every branch, not just the happy
+one). A genuine `invite_code` collision is astronomically unlikely at this app's scale
+(32^6 possible codes) but is a real, if rare, failure mode worth handling at this specific
+system boundary; any other error (network, permissions, anything else) propagates immediately
+on the first attempt, since retrying wouldn't fix it and retrying blindly would mask it.
+
+**`ProfileRow` (originally private to `SupabaseAuthAdapter`) is now internal, shared with
+`SupabaseConnectionAdapter`** — both need to decode the exact same `profiles` row shape when
+resolving a connection's other participant, and duplicating a 4-field DTO across two files
+would just be copy-paste risk with no offsetting benefit.
+
+**Every new PostgREST method used here (`in(_:values:)`'s escaped-keyword name, `rpc(_:params:)`,
+`insert(_:)`, the `PostgrestFilterablePhase: PostgrestTransformablePhase` conformance chain that
+makes `.single()` available after `.rpc(...)`) was checked against the v2.55.1 source before
+writing code against it** — same discipline as Phase 2, for the same reason: a wrong signature
+here only surfaces after a full CI round trip.

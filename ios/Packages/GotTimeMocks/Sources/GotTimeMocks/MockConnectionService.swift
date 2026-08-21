@@ -1,8 +1,8 @@
 import Foundation
 import GotTimeCore
 
-/// Development-only ConnectionService. Real invite generation/redemption against Supabase
-/// lands in Phase 3.
+/// Development-only ConnectionService — see SupabaseConnectionAdapter (App/Integrations/) for
+/// the real, Supabase-backed implementation this stands in for outside DEBUG/UI-test runs.
 public final class MockConnectionService: ConnectionService, @unchecked Sendable {
     private let lock = NSLock()
     private var connections: [ConnectedPerson]
@@ -20,7 +20,7 @@ public final class MockConnectionService: ConnectionService, @unchecked Sendable
     public func createInvite() async throws -> ConnectionInvite {
         ConnectionInvite(
             id: UUID(),
-            inviteCode: Self.randomCode(),
+            inviteCode: InviteCodeGenerator.generate(),
             status: .pending,
             expiresAt: Date().addingTimeInterval(60 * 60 * 24 * 7),
             createdAt: .now
@@ -48,10 +48,5 @@ public final class MockConnectionService: ConnectionService, @unchecked Sendable
         lock.lock()
         connections.removeAll { $0.connectionId == id }
         lock.unlock()
-    }
-
-    private static func randomCode() -> String {
-        let characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        return String((0..<6).compactMap { _ in characters.randomElement() })
     }
 }

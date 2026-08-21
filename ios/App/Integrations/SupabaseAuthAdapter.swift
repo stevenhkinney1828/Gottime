@@ -142,13 +142,15 @@ public final class SupabaseAuthAdapter: NSObject, AuthService, @unchecked Sendab
             .single()
             .execute()
             .value
-        return Profile(id: row.id, firstName: row.firstName, createdAt: row.createdAt, updatedAt: row.updatedAt)
+        return row.profile
     }
 }
 
 /// Mirrors the `profiles` table's actual (snake_case) column names explicitly, rather than
-/// relying on a decoder's automatic case conversion being configured a particular way.
-private struct ProfileRow: Decodable {
+/// relying on a decoder's automatic case conversion being configured a particular way. Shared
+/// (not `private`) since `SupabaseConnectionAdapter` needs the same row shape when resolving
+/// the other participant in a connection.
+struct ProfileRow: Decodable {
     let id: UUID
     let firstName: String?
     let createdAt: Date
@@ -159,6 +161,10 @@ private struct ProfileRow: Decodable {
         case firstName = "first_name"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+    }
+
+    var profile: Profile {
+        Profile(id: id, firstName: firstName, createdAt: createdAt, updatedAt: updatedAt)
     }
 }
 
