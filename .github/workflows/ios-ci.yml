@@ -131,6 +131,15 @@ jobs:
       # xcodebuild create/update the app's certificates and provisioning profile itself via the
       # API key's authority (this is what "automatic signing" means for a headless CI box with
       # no prior manual Xcode/Keychain setup).
+      #
+      # CODE_SIGN_IDENTITY=- (a literal hyphen, not a placeholder) plus
+      # AD_HOC_CODE_SIGNING_ALLOWED=YES: without these, automatic signing on a brand-new bundle
+      # ID with zero existing profiles defaults to trying to create an *iOS App Development*
+      # profile, which requires at least one registered device UDID on the account — something
+      # this project's TestFlight-only distribution design (see DECISIONS.md) never needs and
+      # this account doesn't have yet. These two settings let it reach for a distribution-style
+      # profile instead, which needs no registered devices at all. Discovered from a real first
+      # run's exact error text, not anticipated ahead of time — see DECISIONS.md.
       - name: Archive
         if: steps.check.outputs.ready == 'true'
         working-directory: ios
@@ -152,6 +161,8 @@ jobs:
             CODE_SIGN_STYLE=Automatic \
             CODE_SIGNING_REQUIRED=YES \
             CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
 
       # destination=upload makes -exportArchive both export AND upload directly to App Store
