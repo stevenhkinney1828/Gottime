@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
-**Current phase: Phase 4 — Voice proof (backend done and verified live; building the iOS side next; 2-part owner gate remains for real device testing — see bottom)**
+**Current phase: Phase 4 — Voice proof (backend done and verified live; TwilioVoiceAdapter built and wired in, CI verification in progress; 2-part owner gate remains for real device testing — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -55,7 +55,10 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ **Twilio account created and fully wired up**: billing enabled (pay-as-you-go — confirmed the free trial genuinely can't work here, since Twilio's own docs list `<Dial><Client>` as a blocked verb combination on trial accounts), Account SID/Auth Token/API Key SID+Secret all supplied and stored. `backend/scripts/twilio-setup.ts` created the real TwiML Application (idempotent — safe to re-run, reuses the existing one by FriendlyName instead of duplicating) pointing at the real deployed `twiml-voice` function.
 - ✅ **All 8 Edge Functions deployed to the real project for the first time** — along the way, found and fixed a real bug in `supabase/config.toml` dating back to Phase 0 (a placeholder `project_id` never updated, and a deprecated `[functions]` schema), which had silently blocked *any* real deployment since Phase 2 without anything surfacing it until a real deploy was actually attempted. See DECISIONS.md for the full story.
 - ✅ **The entire voice-token pipeline verified end to end with a real authenticated user and real Twilio credentials**: created a throwaway test user, signed in, called the live `issue-voice-token` function, and got back a genuine Twilio Voice Access Token with the real TwiML App SID embedded and the correct identity — not just passing unit tests against fake credentials.
-- 🚧 Still needed: two physical iPhones, and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build. Also still to build: `TwilioVoiceAdapter`, the actual Swift/iOS integration with Twilio's Voice SDK that makes `VoiceService` real on the client side — the backend half of this phase is done, the client half is next.
+- ✅ **`TwilioVoiceAdapter` built** (`ios/App/Integrations/`) — real `VoiceService`: `startCall` requests a `call_sessions` row server-side first (`request-call`), mints a fresh Access Token (`issue-voice-token`), then connects through the Twilio Voice SDK, embedding the session id as the call's `callSessionId` param for `twiml-voice` to route on. Every `CallDelegate` callback funnels through the same `CallStateMachine.apply` transition rules `MockVoiceService` already uses. `answer`/`decline` are wired to a `pendingInvite`, populated by a plain method not yet called from anywhere — receiving a real incoming call needs Phase 5's PushKitAdapter first, which doesn't change anything about this adapter once it exists. Twilio Voice iOS SDK added as an SPM dependency (6.13.x); `AppEnvironment.live()` now constructs this adapter for `voiceService`, graduating it alongside the already-live `authService`/`connectionService`.
+- ✅ **Caught a real decoding gap before it could surface on a device**: `FunctionsClient`'s default JSON decoder (unlike `PostgrestClient`'s) doesn't parse ISO 8601 date strings, which would have made the adapter's `request-call` response fail to decode its three timestamp fields. Fixed by passing an explicit custom decoder, verified against the SDK's actual `invoke(_:options:decoder:)` signature before relying on it. See DECISIONS.md for the full reasoning.
+- 🔄 Pushed for CI verification that the new SPM dependency resolves and the whole App target (including this new file) actually builds — result pending, this line will be updated once it lands.
+- 🚧 Still needed before a real two-way call can be tested: two physical iPhones, and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build.
 
 ## Phase 5 — CallKit / PushKit
 ⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).
@@ -92,8 +95,9 @@ Two things left, both needed before real two-way voice calling can be tested for
    CI can sign a real build and upload it to TestFlight automatically. See SETUP.md for the
    walkthrough once ready to set this up.
 
-In the meantime, the `TwilioVoiceAdapter` (the Swift/iOS side that actually uses Twilio's Voice
-SDK) can be built without either of those — planned as the next piece of autonomous work.
+In the meantime, `TwilioVoiceAdapter` (the Swift/iOS side that actually uses Twilio's Voice SDK)
+has now been built without needing either of those — see Phase 4 above. What's left in this
+phase is genuinely gated on both: no local or CI-only path can exercise a real two-way call.
 
 See the table in the approved build plan / SETUP.md for the full list beyond this and what each
 requires.

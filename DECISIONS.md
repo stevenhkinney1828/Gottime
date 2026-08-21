@@ -822,3 +822,58 @@ lifecycle timestamps — `ringingAt`/`connectedAt`/etc. — are correctly absent
 freshly-created session and don't need to appear in the payload at all: Swift's synthesized
 `Decodable` treats a missing key for an `Optional` property as `nil` without erroring, so
 there was nothing to fix there.)
+
+## TwilioVoiceAdapter built; voiceService graduates to live
+
+**`ios/App/Integrations/TwilioVoiceAdapter.swift`** implements `VoiceService` against the real
+Twilio Voice iOS SDK (added as an SPM dependency, `https://github.com/twilio/twilio-voice-ios`
+`from: 6.13.0`, product `TwilioVoice` — version and product name confirmed against the SDK's
+own `Package.swift` before adding it, same discipline as every other dependency this session).
+`startCall` calls `request-call` first (server-side authorization/duration validation, never
+trusting its own inputs, per spec §13), then `issue-voice-token` for a fresh Access Token, then
+connects through `TwilioVoiceSDK.connect`, embedding the session id as the outgoing call's
+`callSessionId` param — the same id `twiml-voice` already reads to route the call. Every
+`CallDelegate` callback funnels through `CallStateMachine.apply`, the same transition rules
+`MockVoiceService` already uses, so there is exactly one source of truth for which state
+transitions are valid regardless of which adapter is active.
+
+`answer`/`decline` operate on a `pendingInvite`, populated by a plain `handleIncomingCallInvite`
+method — not called from anywhere yet, since receiving a real `CallInvite` at all requires a
+VoIP push, which needs `PushKitAdapter`/PushKit registration (Phase 5, already a distinct
+protocol — confirmed by re-reading `PushService.swift` before starting this file, which is what
+confirmed this adapter's scope doesn't need to expand to cover it). The adapter is structurally
+complete and correct today regardless; nothing here needs to change once PushKitAdapter starts
+feeding it real invites.
+
+**Explicitly passes a custom decoder to the `request-call` `invoke()` call, rather than relying
+on `FunctionsClient`'s default.** Checked `FunctionsClient.swift`'s actual source before trusting
+this: unlike `PostgrestClient`, whose default decoder has a custom ISO 8601
+`dateDecodingStrategy` (why every `Date` field decoded correctly in `SupabaseAuthAdapter`/
+`SupabaseConnectionAdapter` without any special handling), `FunctionsClient`'s own default is a
+bare, unconfigured `JSONDecoder()`. Passed as-is, `CallSessionRow`'s three `Date` fields
+(`initiatedAt`/`createdAt`/`updatedAt` — the exact ones just fixed server-side in the entry
+above) would have failed to decode the first time this path actually ran, on a real device, the
+most expensive possible point to discover it. Confirmed the fix against the real signature
+(`invoke<T: Decodable>(_:options:decoder:)`, `decoder: JSONDecoder? = nil` defaulting to
+`self.decoder`) before relying on it. The custom decoder handles Postgres's timestamptz output
+both with and without fractional seconds, matching what a real `request-call` response was
+observed to actually contain (`"...2026-08-21T02:03:47.681663+00:00"`) rather than assuming one
+specific format.
+
+**`callDidDisconnect` distinguishes a real error/pre-connection drop (`.failed`) from a clean
+hangup after connecting (`.endedEarly`)**, but deliberately does not attempt to distinguish "hung
+up early" from "reached zero exactly on schedule" — same reasoning as
+`twilio-status-callback`'s "completed" no-op above: that distinction needs Phase 6's full
+duration-enforcement design. If this adapter's own timer already drove a session to `.timedOut`
+before Twilio's disconnect callback arrives, `CallStateMachine.apply`'s existing transition
+rules simply reject the late, now-invalid `.endedEarly` attempt on a terminal session — so
+nothing here can accidentally overwrite a correct `.timedOut` outcome with an incorrect one.
+
+**`AppEnvironment.live()` now constructs `TwilioVoiceAdapter(client:)` for `voiceService`**,
+graduating it alongside the already-live `authService`/`connectionService`; `callHistoryService`/
+`pushService` remain mocked until Phase 5 for the same PushKit-dependency reason above. Debug
+still defaults to `.mock()` (GotTimeUITests' canonical-flow test is unaffected by this
+graduation by design), the same Release-always-live/Debug-opt-in split established in Phase 2.
+Pushed for `ios-ci.yml` to confirm the new SPM dependency actually resolves and the whole App
+target still builds — this entry will be amended if that run surfaces anything the read-through
+above missed.
