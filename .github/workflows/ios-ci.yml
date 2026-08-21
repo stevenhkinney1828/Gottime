@@ -75,9 +75,11 @@ jobs:
   # real Twilio/Supabase creds existed), there was no local or fake way to test xcodebuild
   # signing flags ahead of time; real App Store Connect credentials were the only possible test
   # harness for this job. Every flag/plist key below was checked against Apple's own xcodebuild
-  # man page and current documentation (see DECISIONS.md). The owner-supplied secrets and app
-  # record now exist, so this comment stops hedging as of the next real run — see
-  # BUILD_STATUS.md/DECISIONS.md for the actual outcome once it lands.
+  # man page and current documentation (see DECISIONS.md). The first real run did find a real
+  # issue (Archive failed: CryptoKitASN1Error.invalidPEMDocument — the saved .p8 secret didn't
+  # parse, a Notepad copy-paste artifact, not a bug in this file) — the owner re-saved that one
+  # secret with the corrected content; this push is the retry. See DECISIONS.md/BUILD_STATUS.md
+  # for the outcome once it lands.
   sign-and-upload:
     name: Sign & upload to TestFlight
     needs: build-and-test
