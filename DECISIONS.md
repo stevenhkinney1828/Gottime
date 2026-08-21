@@ -775,3 +775,36 @@ session, and 501 for the two still-genuinely-unimplemented stubs) and separately
 `twiml-voice`/`twilio-status-callback` with realistic form-encoded input (an initial test with
 an empty body got a 500, which was the test's own fault, not a real bug — `req.formData()` on
 truly empty input throws; real Twilio requests always send real form data).
+
+## TwiML Application created; Twilio secrets set; whole voice-token pipeline verified live
+
+Confirmed with the owner, before spending their money, that the free trial genuinely cannot
+work for this app specifically: Twilio's own trial-limitations docs list `<Dial><Client>` —
+the exact mechanism this app's entire app-to-app calling design depends on — as a blocked verb
+combination, stripped and replaced with a spoken "not available on trial accounts" message.
+Checked before advising, not assumed; a wrong guess here would have wasted real money or
+real debugging time discovering it the hard way during device testing.
+
+**`backend/scripts/twilio-setup.ts`** creates the TwiML Application via Twilio's REST API
+(reusing the existing `_shared/twilioClient.ts` helper) rather than the console, and is
+idempotent — it lists existing Applications first and reuses one matching by `FriendlyName`
+instead of creating a duplicate on a second run, updating its Voice URL if that's changed
+rather than silently leaving it stale.
+
+**Only the four Twilio values were set as Supabase Edge Function secrets, not the whole `.env`
+file** despite `supabase secrets set --env-file` being one command away. That file also holds
+things with no business being exposed to Edge Function runtime code — the local Postgres URL,
+the Supabase *account-level* access token (a much more powerful, differently-scoped credential
+than anything a function itself should ever hold), and still-empty placeholders for later
+phases. `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` didn't need setting at
+all — confirmed from the earlier 401s (not 500s) on `request-call`/etc. that Supabase already
+auto-injects these into every function's environment.
+
+**Verified the entire pipeline live, not just that each piece deployed without error**: created
+one more throwaway user (same Admin API pattern as `verify-connections-rls.ts`), signed in for
+a real access token, called the live `issue-voice-token` function, and got back a genuine
+Twilio Voice Access Token — decodable, correctly identity-scoped to that user, carrying the
+real TwiML Application SID — before cleaning the test user up. This is the same "verify against
+reality, don't trust a success message" discipline applied throughout this session, just
+extended one level further: past "does it deploy" to "does a real call through it produce a
+correct result."

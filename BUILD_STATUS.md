@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-20
 
-**Current phase: Phase 4 — Voice proof (blocked on a 3-part owner gate — see bottom)**
+**Current phase: Phase 4 — Voice proof (backend done and verified live; building the iOS side next; 2-part owner gate remains for real device testing — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -52,7 +52,10 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ `twiml-voice` — the webhook Twilio calls when the caller's Voice SDK connects; looks up the `call_sessions` row, verifies the request's `From: client:<identity>` actually matches that session's caller (closes a real, if narrow, spoofing gap — a client could otherwise supply any call_session_id as its own outgoing param), and returns `<Dial timeLimit="..."><Client statusCallbackEvent="..." statusCallback="...">` TwiML routing to the recipient. 7/7 tests passing.
 - ✅ `twilio-status-callback` — records `ringing_at`/`connected_at` as Twilio itself reports them (server-side confirmation that "the timer starts only on connection," not just the client's own clock). Deliberately treats the terminal "completed" event as a no-op for now — distinguishing early-hangup from on-schedule-timeout needs Phase 6's full duration-enforcement design, not a guess made here. 4/4 tests passing.
 - Every protocol detail above (JWT shape, TwiML attribute placement and exact vocabulary, how `<Parameter>` differs from a webhook's own query string) was checked against Twilio's current documentation before writing code against it, not assumed from memory — see DECISIONS.md for two real corrections this caught before they became bugs.
-- 🚧 Still needs, before any of this can be proven against reality: a Twilio account with billing set up (Account SID, Auth Token, API Key SID + Secret, and a TwiML App SID created via a one-time `backend/scripts/twilio-setup.ts` run once credentials exist); two physical iPhones; and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build. See the plain-language ask at the bottom of this file.
+- ✅ **Twilio account created and fully wired up**: billing enabled (pay-as-you-go — confirmed the free trial genuinely can't work here, since Twilio's own docs list `<Dial><Client>` as a blocked verb combination on trial accounts), Account SID/Auth Token/API Key SID+Secret all supplied and stored. `backend/scripts/twilio-setup.ts` created the real TwiML Application (idempotent — safe to re-run, reuses the existing one by FriendlyName instead of duplicating) pointing at the real deployed `twiml-voice` function.
+- ✅ **All 8 Edge Functions deployed to the real project for the first time** — along the way, found and fixed a real bug in `supabase/config.toml` dating back to Phase 0 (a placeholder `project_id` never updated, and a deprecated `[functions]` schema), which had silently blocked *any* real deployment since Phase 2 without anything surfacing it until a real deploy was actually attempted. See DECISIONS.md for the full story.
+- ✅ **The entire voice-token pipeline verified end to end with a real authenticated user and real Twilio credentials**: created a throwaway test user, signed in, called the live `issue-voice-token` function, and got back a genuine Twilio Voice Access Token with the real TwiML App SID embedded and the correct identity — not just passing unit tests against fake credentials.
+- 🚧 Still needed: two physical iPhones, and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build. Also still to build: `TwilioVoiceAdapter`, the actual Swift/iOS integration with Twilio's Voice SDK that makes `VoiceService` real on the client side — the backend half of this phase is done, the client half is next.
 
 ## Phase 5 — CallKit / PushKit
 ⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).
@@ -79,17 +82,18 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 5. ~~SQL migration script run~~ — verified: all 5 tables + RLS live on the real project
 6. ~~App ID registered with Sign in with Apple~~ — verified via a real OAuth authorize request
 7. ~~Supabase Apple provider configured~~ — verified the same way; end-to-end wiring confirmed
+8. ~~Twilio account + billing~~ — created, funded, Account SID/Auth Token/API Key SID+Secret supplied and stored; TwiML Application created and verified issuing real tokens
 
 ## Owner gate now blocking (Phase 4)
-Three things, all needed before real two-way voice calling can be built and proven:
-1. **A Twilio account** with billing/a payment method attached (pay-as-you-go — trial accounts
-   have restrictions that would confuse testing). Once created, share the Account SID, Auth
-   Token, and (after creating an API Key in the console) the API Key SID + Secret.
-2. **Two physical iPhones** on hand — this is the one thing with no software substitute; the
+Two things left, both needed before real two-way voice calling can be tested for real:
+1. **Two physical iPhones** on hand — this is the one thing with no software substitute; the
    whole point of this phase is proving a real call works between two real devices.
-3. **An App Store Connect API key + an Internal Testing group** set up in App Store Connect, so
+2. **An App Store Connect API key + an Internal Testing group** set up in App Store Connect, so
    CI can sign a real build and upload it to TestFlight automatically. See SETUP.md for the
    walkthrough once ready to set this up.
+
+In the meantime, the `TwilioVoiceAdapter` (the Swift/iOS side that actually uses Twilio's Voice
+SDK) can be built without either of those — planned as the next piece of autonomous work.
 
 See the table in the approved build plan / SETUP.md for the full list beyond this and what each
 requires.
