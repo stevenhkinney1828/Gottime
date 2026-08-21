@@ -808,3 +808,17 @@ real TwiML Application SID — before cleaning the test user up. This is the sam
 reality, don't trust a success message" discipline applied throughout this session, just
 extended one level further: past "does it deploy" to "does a real call through it produce a
 correct result."
+
+**Found and fixed a second real gap the same way, in `request-call`**, ahead of building the
+Swift adapter that will actually consume its response: `CallSessionRecord`'s `.select(...)`
+only ever asked for `id, call_uuid, caller_id, recipient_id, requested_duration_seconds,
+status` — enough for the Phase 1 tests that only checked those specific fields, but missing
+`initiated_at`/`created_at`/`updated_at`, which the Swift `CallSession` struct requires as
+non-optional. Nothing before now ever decoded this response into a real `CallSession`, so
+nothing caught the gap. Added the three fields to the select, the TypeScript interface, and
+the test fixture; redeployed; verified live with two connected throwaway users that the real
+response now includes correctly-formatted ISO 8601 timestamps for all three. (The other
+lifecycle timestamps — `ringingAt`/`connectedAt`/etc. — are correctly absent from a
+freshly-created session and don't need to appear in the payload at all: Swift's synthesized
+`Decodable` treats a missing key for an `Optional` property as `nil` without erroring, so
+there was nothing to fix there.)

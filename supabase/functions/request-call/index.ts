@@ -34,7 +34,10 @@ class SupabaseRequestCallClient implements RequestCallClient {
         requested_duration_seconds: params.requestedDurationSeconds,
         status: "created",
       })
-      .select("id, call_uuid, caller_id, recipient_id, requested_duration_seconds, status")
+      .select(
+        "id, call_uuid, caller_id, recipient_id, requested_duration_seconds, status, " +
+          "initiated_at, created_at, updated_at",
+      )
       .single();
     if (error) throw error;
     return {
@@ -44,6 +47,9 @@ class SupabaseRequestCallClient implements RequestCallClient {
       recipientId: data.recipient_id,
       requestedDurationSeconds: data.requested_duration_seconds,
       status: data.status,
+      initiatedAt: data.initiated_at,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
     };
   }
 }

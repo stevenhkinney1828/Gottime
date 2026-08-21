@@ -10,6 +10,12 @@ export interface CallSessionRecord {
   recipientId: string;
   requestedDurationSeconds: number;
   status: string;
+  /** ISO 8601 strings — the iOS client's CallSession requires all three non-optional; the
+   * other lifecycle timestamps (ringingAt/connectedAt/endedAt/etc.) are correctly absent from
+   * a freshly-created session and decode as nil client-side without needing to appear here. */
+  initiatedAt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface RequestCallClient {

@@ -25,6 +25,7 @@ class FakeRequestCallClient implements RequestCallClient {
     params: { callerId: string; recipientId: string; requestedDurationSeconds: number },
   ): Promise<CallSessionRecord> {
     this.created.push(params);
+    const now = new Date().toISOString();
     return Promise.resolve({
       id: "session-1",
       callUuid: "uuid-1",
@@ -32,6 +33,9 @@ class FakeRequestCallClient implements RequestCallClient {
       recipientId: params.recipientId,
       requestedDurationSeconds: params.requestedDurationSeconds,
       status: "created",
+      initiatedAt: now,
+      createdAt: now,
+      updatedAt: now,
     });
   }
 }
