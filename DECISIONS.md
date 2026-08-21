@@ -1013,3 +1013,44 @@ bytes onto the clipboard with no manual selection step for anything to go wrong 
 operation rather than piping the key's contents through this session at all, even transiently —
 consistent with the earlier reasoning that the fewer hops a private signing key passes through,
 the better.
+
+## Second and third real findings: Development-only profile, then wrong API key role
+
+The PEM fix worked — confirmed directly (the retry's Archive step got measurably further:
+package resolution, dependency checkout, actual compilation, versus failing in under 15 seconds
+last time on local credential parsing). It then failed at the same **Archive** step with a
+different, real error: `error: Communication with Apple failed: Your team has no devices from
+which to generate a provisioning profile` / `No profiles for 'com.stevenkinney.gottime' were
+found: ... iOS App Development provisioning profiles`. Automatic signing on a brand-new bundle
+ID with zero existing profiles was defaulting to *Development*-style signing, which structurally
+requires at least one registered device UDID — this project has none yet (by design; see the
+TestFlight-only distribution decision above) and won't until the two-iPhone gate clears
+separately. Fixed by adding `CODE_SIGN_IDENTITY=-` (literal hyphen — lets automatic signing pick
+the identity type itself rather than a manually-forced one, which would otherwise conflict with
+`CODE_SIGN_STYLE=Automatic`) and `AD_HOC_CODE_SIGNING_ALLOWED=YES` (broadens automatic signing to
+consider distribution-style profiles, which need no registered devices) to the Archive step's
+build settings. Cross-checked against two independently-phrased sources converging on the exact
+same combination before applying it, rather than trusting one.
+
+**That fix worked too** — Archive succeeded outright on the next retry, one step further than
+ever before, failing instead at **Export & upload to TestFlight** with: `error: exportArchive
+Cloud signing permission error` / `error: exportArchive No signing certificate "iOS Distribution"
+found`. Researched this exact phrase directly rather than guess at another build-setting
+tweak, and found a precise, specific answer: **distribution signing via cloud signing through
+`xcodebuild -exportArchive` requires an App Store Connect API key with Admin-level access —
+Developer or App Manager keys fail with exactly this error.** This directly overturns this
+file's own earlier "App Manager, not Developer" reasoning above: that check was correct about
+what App Manager *can* do (manage TestFlight/testers/submissions) but incomplete about what this
+specific pipeline *needs* (cloud-managed certificate creation, which is Admin-only). SETUP.md
+now recommends Admin outright — it's a strict superset of App Manager's capabilities for this
+project's purposes, so there's no remaining reason to prefer the narrower role. Fix requires the
+owner to generate a new Team API key with Admin access (API key roles aren't editable after
+creation) and update just `APP_STORE_CONNECT_API_KEY_ID`/`APP_STORE_CONNECT_API_KEY_P8` — Issuer
+ID and Team ID are account-wide, not per-key, so those two secrets don't need to change.
+
+**Pattern worth naming**: three real, previously-unverifiable issues in a row, each one only
+reachable after fixing the last (a credential parsing error blocks ever seeing the profile-type
+error, which blocks ever seeing the permission error) — exactly what "no fake credential stands
+in for Apple's real signing authority" (stated when this job was first written) predicted, just
+playing out over several rounds instead of one. Each root-caused from the real error text plus
+external verification before applying a fix, not from repeated guessing.

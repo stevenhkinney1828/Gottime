@@ -113,8 +113,11 @@ last thing needed before a real build can land on your two iPhones. Three parts,
 5. Click **Generate API Key** (or the **+** button).
 6. Under **Name**, type anything you'll recognize later, e.g. `GotTime CI`. This is just a
    label — it's not part of the key itself.
-7. Under **Access**, choose **App Manager**. (Not "Developer" — that role can't manage
-   TestFlight testers, which this project will need later when friends and family get invited.)
+7. Under **Access**, choose **Admin**. (An earlier version of this guide said "App Manager" —
+   that turned out to be wrong: uploading a signed build this way needs a capability called
+   "cloud signing," which specifically requires Admin-level access. Non-Admin keys fail with a
+   "Cloud signing permission error" — found out directly from a real failed attempt, not
+   anticipated ahead of time. Admin covers everything App Manager would have anyway.)
 8. Click **Generate**.
 9. You'll now see three things on the page:
    - **Key ID** — a short code.
