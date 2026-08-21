@@ -47,16 +47,12 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ Confirmed via a fresh `ios-ci.yml` run: compiles clean, mocked UI test still passes end to end.
 - ✅ **The whole security model verified live against the real project**, exactly as the build plan called for: `backend/scripts/verify-connections-rls.ts` creates three throwaway users through the Admin API (no real Apple ID needed), then as real authenticated requests — Alice creates an invite, Bob redeems it, both can then see each other's profile, a third unconnected user (Carol) sees neither the profile nor the connection, redeeming an already-redeemed code fails, and redeeming your own invite fails. All 8 checks passed on the first real run; cleanup of all three throwaway users independently confirmed afterward via a follow-up Admin API listing, not just assumed. Script is committed and re-runnable, not a one-off — see `backend/README.md`.
 
-## Phase 4 — Voice proof (the hard thing) 🚧 blocked on owner gate for the real thing
-⬜ Not started — this is the phase real two-way voice calling actually gets built and proven,
-and reaching that point needs three things from the owner (see bottom of this file for the
-plain-language ask): a Twilio account with billing set up; two physical iPhones on hand; and an
-App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight
-build. What *doesn't* need those: the Edge Functions' own request-validation/response-shaping
-logic (`issue-voice-token`, `twiml-voice`, `twilio-status-callback`) can be built and unit-tested
-against a dependency-injected fake Twilio client the same way `request-call`/`call-action` were
-built before a real Supabase project existed — planned as the next piece of autonomous prep
-while the owner works through the gate below.
+## Phase 4 — Voice proof (the hard thing) 🔄 Edge Function logic done; 🚧 blocked on owner gate for the real thing
+- ✅ `issue-voice-token` — mints a real Twilio Voice Access Token (the exact JWT format Twilio's SDK expects: HS256, `cty: "twilio-fpa;v=1"`, `grants.identity`/`grants.voice.outgoing.application_sid`), identity = the caller's own Supabase user id. Tested including an independent HMAC-signature re-verification (5/5 tests), not just checking the decoded claims look right.
+- ✅ `twiml-voice` — the webhook Twilio calls when the caller's Voice SDK connects; looks up the `call_sessions` row, verifies the request's `From: client:<identity>` actually matches that session's caller (closes a real, if narrow, spoofing gap — a client could otherwise supply any call_session_id as its own outgoing param), and returns `<Dial timeLimit="..."><Client statusCallbackEvent="..." statusCallback="...">` TwiML routing to the recipient. 7/7 tests passing.
+- ✅ `twilio-status-callback` — records `ringing_at`/`connected_at` as Twilio itself reports them (server-side confirmation that "the timer starts only on connection," not just the client's own clock). Deliberately treats the terminal "completed" event as a no-op for now — distinguishing early-hangup from on-schedule-timeout needs Phase 6's full duration-enforcement design, not a guess made here. 4/4 tests passing.
+- Every protocol detail above (JWT shape, TwiML attribute placement and exact vocabulary, how `<Parameter>` differs from a webhook's own query string) was checked against Twilio's current documentation before writing code against it, not assumed from memory — see DECISIONS.md for two real corrections this caught before they became bugs.
+- 🚧 Still needs, before any of this can be proven against reality: a Twilio account with billing set up (Account SID, Auth Token, API Key SID + Secret, and a TwiML App SID created via a one-time `backend/scripts/twilio-setup.ts` run once credentials exist); two physical iPhones; and an App Store Connect API key + Internal Testing group so CI can sign and upload a real TestFlight build. See the plain-language ask at the bottom of this file.
 
 ## Phase 5 — CallKit / PushKit
 ⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).

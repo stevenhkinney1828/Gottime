@@ -671,3 +671,63 @@ still behaves correctly; not wired into CI as an automated gate yet, since that 
 Supabase secrets added to GitHub Actions and failure-safe cleanup guarantees beyond what a
 manually-invoked local script needs, which is a separate, larger decision than this phase's
 sign-off required.
+
+## Phase 4 prep: Edge Function logic built ahead of the Twilio owner gate
+
+Real Twilio credentials, two physical iPhones, and an App Store Connect API key are all still
+needed before this phase's actual voice proof can happen — but `issue-voice-token`,
+`twiml-voice`, and `twilio-status-callback`'s own request-validation/response-shaping logic
+doesn't need any of those to be written and unit-tested, the same way `request-call`/
+`call-action` were built and tested before a real Supabase project existed (Phase 0/1). Built all
+three now rather than waiting, matching the "finish everything else possible" instruction.
+
+**Every protocol detail was checked against Twilio's current docs via WebFetch before writing
+code against it** — same discipline as the Supabase SDK verification, and for the same reason:
+a wrong assumption here would only surface once real devices are involved in Phase 4, a far more
+expensive feedback loop than a CI round trip. This caught two real mistakes before they became
+code:
+- The Access Token JWT structure (header `cty: "twilio-fpa;v=1"`, `grants.identity`,
+  `grants.voice.outgoing.application_sid`) matched what I'd have written from memory, but was
+  worth confirming exactly rather than assuming.
+- I initially conflated two different Twilio status vocabularies. The `<Client>` noun's own
+  `statusCallbackEvent` (what this app actually uses, since the recipient leg is a `<Client>`
+  inside `<Dial>`) only fires `initiated`/`ringing`/`answered`/`completed` — narrower than the
+  general Call resource's `queued`/`ringing`/`in-progress`/`completed`/`busy`/`failed`/
+  `no-answer`/`canceled` I'd originally designed `twilio-status-callback`'s logic around. Would
+  have shipped a mapping function that silently never matched half its own cases.
+- `<Parameter>` inside `<Client>` only reaches the Voice SDK client instance on the *receiving*
+  end (`TVOCallInvite.customParameters` on iOS) — it is never delivered to a server-side
+  webhook. `twilio-status-callback` therefore can't learn which `call_sessions` row a status
+  event belongs to from the request body at all; the standard, Twilio-confirmed pattern is
+  embedding the id in the `statusCallback` URL's own query string instead (`?call_session_id=`),
+  which `twiml-voice` constructs dynamically per call. Read literally, my first mental model
+  would have shipped a webhook that could never correlate its events to anything.
+
+**`twiml-voice` verifies the caller's Twilio identity before trusting the client-supplied
+`callSessionId`.** Twilio Voice SDK calls always present the caller's own identity as
+`From: client:<identity>` for an app-to-app call (confirmed via the same doc check) — a fact
+this webhook gets for free and checks against the session's `caller_id` before routing. Without
+this, a client could supply *any* call_session_id string as its outgoing `params` and have this
+webhook dial on that session's behalf; the practical blast radius is narrow (Twilio's own 1:1
+call routing means this couldn't be used to eavesdrop on a call in progress), but it's a real,
+cheaply-closed gap, not a hypothetical one.
+
+**`twilio-status-callback` deliberately treats Twilio's "completed" event as a no-op for now.**
+Distinguishing "a participant hung up early" from "the timer reached zero exactly on schedule"
+needs the full duration-enforcement design this project has already deferred to Phase 6 (three
+independent layers: client-side disconnect, backend `timeLimit` tightening, cron sweep backstop)
+— a single terminal webhook event can't carry that distinction by itself, and guessing here would
+risk silently mislabeling history entries later. `call-action`'s existing `endActiveCall` (client-
+initiated, already built) already records `ended_early` correctly today; "completed" gets handled
+properly once Phase 6 actually builds the rest of that design, not before.
+
+**Status transitions apply via a `WHERE status IN (...)` guard, not application-side ordering
+logic or timestamp `COALESCE`s.** A duplicate or late-arriving webhook (Twilio retries ones that
+don't respond quickly) simply matches zero rows once the session has already moved past that
+point — idempotent by construction, not by an extra check. Pushing this into the SQL update's own
+WHERE clause is simpler and more robust than tracking allowed-transition state in TypeScript.
+
+**`functionSkeletons_test.ts` updated to drop the three graduated functions**, matching the
+file's own stated convention (`request-call`/`call-action` did the same in Phase 0/1) — each
+function's own new test file (`issueVoiceToken_test.ts`, `twimlVoice_test.ts`,
+`twilioStatusCallback_test.ts`) is now the real coverage.
