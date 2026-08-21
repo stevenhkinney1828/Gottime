@@ -731,3 +731,47 @@ WHERE clause is simpler and more robust than tracking allowed-transition state i
 file's own stated convention (`request-call`/`call-action` did the same in Phase 0/1) — each
 function's own new test file (`issueVoiceToken_test.ts`, `twimlVoice_test.ts`,
 `twilioStatusCallback_test.ts`) is now the real coverage.
+
+## First real backend deploy: all 8 Edge Functions live, and a genuine config.toml bug found
+
+With real Twilio credentials in hand and a Supabase personal access token (a new, distinct
+credential from the project-level keys — needed because deploying code is an account-level
+Management API operation, not something a project's own anon/service_role key can authorize),
+ran `npx supabase functions deploy` for the first time against the real project. Confirmed
+first, directly, that nothing had ever actually been deployed before this (every function
+returned 404 from the real project's URL) — Phase 0-3 work had only ever been verified via
+local `deno test` and the mocked/real-database-but-no-Edge-Functions paths (Phase 3's
+connections work talks to PostgREST/RPC directly, never through an Edge Function; Phase 2's
+`delete-account` was written and unit-tested but never actually reachable until now).
+
+**Found and fixed a real bug in `supabase/config.toml`, unrelated to anything built this
+session** — it dated back to Phase 0. Two separate problems, both only surfacing once a real
+deploy was attempted for the first time:
+1. `project_id` was still the literal placeholder string (`"REPLACE_WITH_REAL_PROJECT_REF"`)
+   from Phase 0 scaffolding, never updated once the real project existed in Phase 2. Nothing
+   Phase 2 or 3 needed a deploy, so nothing exercised this until now.
+2. The `[functions]` section used a global `verify_jwt = true` — a schema the local CLI's `list`
+   command tolerated silently but `deploy` (2.x) rejects; the current schema requires one
+   `[functions.<name>]` sub-table per function (confirmed against Supabase's own current CLI
+   config reference before changing anything, same discipline as everywhere else this session).
+   Both problems produced the identical, unhelpful `"ProjectConfigParseError"` with no
+   indication which section was wrong — resolved by bisecting the file section by section
+   against a real `deploy` call (not just `list`, which doesn't exercise the same code path)
+   until the exact culprit was isolated, rather than guessing.
+
+**Also removed `[api]`/`[db]`/`[studio]`/`[auth]`/`[auth.external.apple]`/`[edge_runtime]`
+entirely, not just fixed them.** These configure the local Docker emulator (`supabase start`),
+which this project has never used and, per KNOWN_LIMITATIONS.md, deliberately doesn't (local
+verification uses plain winget Postgres + `auth_shim.sql` instead). `functions deploy` sends the
+*whole* config file to Supabase's hosted config parser, which is stricter than the local CLI and
+rejected something in this dead configuration with the same opaque error — genuinely-unused
+sections were actively breaking a real, needed capability. Deleting them fixed the immediate bug
+and removed configuration nothing in this project's actual workflow ever reads.
+
+**Verified the deployed functions directly, not just trusted the CLI's "Deployed Functions"
+message** — re-ran the same 404 check from before (now returning 401 for the four
+authenticated functions, correctly rejecting a service-role key used as if it were a user
+session, and 501 for the two still-genuinely-unimplemented stubs) and separately confirmed
+`twiml-voice`/`twilio-status-callback` with realistic form-encoded input (an initial test with
+an empty body got a 500, which was the test's own fault, not a real bug — `req.formData()` on
+truly empty input throws; real Twilio requests always send real form data).

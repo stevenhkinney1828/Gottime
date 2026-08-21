@@ -1,49 +1,42 @@
-# Supabase CLI project configuration. Most sections here only matter for `supabase start`
-# (the Docker-based full local emulator), which this project deliberately doesn't use — see
-# DECISIONS.md and KNOWN_LIMITATIONS.md for why local verification instead uses a plain
-# winget-installed Postgres + supabase/seed/auth_shim.sql. This file still matters for
-# `supabase link` / `supabase db push` / `supabase functions deploy` against the real,
-# hosted project once it exists (Phase 2+).
+# Supabase CLI project configuration — used by `supabase functions deploy` against the real,
+# hosted project (Phase 2+). Deliberately does NOT include [api]/[db]/[studio]/[auth]/
+# [edge_runtime] sections for the local Docker emulator (`supabase start`), which this project
+# has never used — see DECISIONS.md and KNOWN_LIMITATIONS.md for why local verification
+# instead uses a plain winget-installed Postgres + supabase/seed/auth_shim.sql. Those sections
+# used to be here (harmless for the local CLI, which never complained about them), but
+# `functions deploy` sends this whole file to Supabase's *hosted* config parser, which is
+# stricter and rejected one of them with an opaque "ProjectConfigParseError" that gave no hint
+# which section was the problem — removing everything but what deploy actually needs both
+# fixed it and deleted genuinely-unused configuration. If `supabase start` is ever adopted
+# later, those sections can come back, ideally added back one at a time against a real deploy
+# to catch a repeat of this immediately rather than guessing again.
 
-project_id = "REPLACE_WITH_REAL_PROJECT_REF"
-# Set once the Supabase project is created (Phase 2) — see SETUP.md. Find it in the
-# project's dashboard URL or `supabase projects list`.
+project_id = "wraowtlpekpmpekkcquq"
 
-[api]
-enabled = true
-port = 54321
-schemas = ["public", "graphql_public"]
-extra_search_path = ["public"]
-max_rows = 1000
-
-[db]
-port = 54322
-major_version = 17
-
-[studio]
-enabled = true
-port = 54323
-
-[auth]
-enabled = true
-site_url = "http://localhost:3000"
-additional_redirect_urls = []
-jwt_expiry = 3600
-enable_signup = false
-# Sign-up happens only via Sign in with Apple (Phase 2), never email/password.
-
-[auth.external.apple]
-enabled = true
-client_id = ""
-secret = ""
-# Populated from the Apple Services ID + Sign-in-with-Apple key once the owner's Apple
-# Developer Program setup for this is complete (Phase 2) — see SETUP.md and DECISIONS.md.
-
-[edge_runtime]
-enabled = true
-
-[functions]
+# Per-function settings, one sub-table each — the CLI (2.x) requires this form; a single
+# global [functions] block with a bare verify_jwt is a deprecated schema that separately also
+# failed to parse. Only twiml-voice and twilio-status-callback are called by Twilio directly
+# rather than by an authenticated app user, so only those two turn JWT verification off.
+[functions.request-call]
 verify_jwt = true
-# Per-function overrides (e.g. verify_jwt = false for twiml-voice and
-# twilio-status-callback, which are called by Twilio, not by an authenticated app user) are
-# added when those functions are implemented in Phase 4.
+
+[functions.call-action]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.issue-voice-token]
+verify_jwt = true
+
+[functions.register-device]
+verify_jwt = true
+
+[functions.expire-call-sweep]
+verify_jwt = true
+
+[functions.twiml-voice]
+verify_jwt = false
+
+[functions.twilio-status-callback]
+verify_jwt = false
