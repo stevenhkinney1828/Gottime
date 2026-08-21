@@ -47,6 +47,9 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: 2.0.0
+  TwilioVoice:
+    url: https://github.com/twilio/twilio-voice-ios
+    from: 6.13.0
 
 targets:
   GotTime:
@@ -60,6 +63,8 @@ targets:
       - package: GotTimeMocks
       - package: Supabase
         product: Supabase
+      - package: TwilioVoice
+        product: TwilioVoice
     entitlements:
       path: Config/GotTime.entitlements
       properties:
