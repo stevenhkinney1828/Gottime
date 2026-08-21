@@ -70,13 +70,14 @@ jobs:
   # skipped until APP_STORE_CONNECT_API_KEY_ID (and the other signing secrets) exist — so this
   # file is complete and correct from Phase 0 onward rather than needing a rewrite later.
   #
-  # Written before real Apple credentials exist to sign anything with — unlike every backend
-  # piece built the same way (Edge Function logic tested against fakes before real Twilio/
-  # Supabase creds existed), there is no local or fake way to test xcodebuild signing flags at
-  # all; real App Store Connect credentials are the only possible test harness for this job.
-  # Every flag/plist key below was checked against Apple's own xcodebuild man page and current
-  # documentation (see DECISIONS.md), but this should be treated as a strong first draft, not a
-  # verified-working pipeline, until it actually runs once the owner gate below is cleared.
+  # Originally written before real Apple credentials existed to sign anything with — unlike
+  # every backend piece built the same way (Edge Function logic tested against fakes before
+  # real Twilio/Supabase creds existed), there was no local or fake way to test xcodebuild
+  # signing flags ahead of time; real App Store Connect credentials were the only possible test
+  # harness for this job. Every flag/plist key below was checked against Apple's own xcodebuild
+  # man page and current documentation (see DECISIONS.md). The owner-supplied secrets and app
+  # record now exist, so this comment stops hedging as of the next real run — see
+  # BUILD_STATUS.md/DECISIONS.md for the actual outcome once it lands.
   sign-and-upload:
     name: Sign & upload to TestFlight
     needs: build-and-test
