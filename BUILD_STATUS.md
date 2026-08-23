@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-21
+Last updated: 2026-08-23
 
-**Current phase: Phase 4 — Voice proof (a real signed build has reached TestFlight for the first time; only the two-iPhone device test and setting up an Internal Testing group remain — see bottom)**
+**Current phase: Phase 4 — Voice proof (a real signed build is on TestFlight, the Internal Testing group is set up; only the two-iPhone device test itself remains — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -88,20 +88,18 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 7. ~~Supabase Apple provider configured~~ — verified the same way; end-to-end wiring confirmed
 8. ~~Twilio account + billing~~ — created, funded, Account SID/Auth Token/API Key SID+Secret supplied and stored; TwiML Application created and verified issuing real tokens
 9. ~~App Store Connect API key + app record~~ — Admin-role Team API key created, app registered as "GotTime? Calling", all four secrets saved; **CI now genuinely signs and uploads a real build to TestFlight, verified by an actual successful run**, not just by the pipeline existing.
+10. ~~Internal Testing group~~ — "Family Tester" group created, automatic build distribution turned on, owner added as a tester (adding a tester turned out to be a separate screen from creating the group itself — normal App Store Connect behavior, not a bug).
 
 ## Owner gate now blocking (Phase 4)
-Two things left before real two-way voice calling can be tested for real:
-1. **Two physical iPhones** on hand — this is the one thing with no software substitute; the
-   whole point of this phase is proving a real call works between two real devices.
-2. **An Internal Testing group**, set up once in App Store Connect, so those two iPhones can
-   actually install the build that's already sitting in TestFlight. See SETUP.md ("Part C") for
-   the click-by-click walkthrough — this is genuinely the next thing to do, and unlike
-   everything above it, it's pure App Store Connect UI clicking with no CI/credential
-   uncertainty left in it.
+One thing left before real two-way voice calling can be tested for real: **two physical
+iPhones** on hand, both with the TestFlight app installed and the GotTime build ready to open.
+This is the one thing in this whole phase with no software substitute — the entire point of it
+is proving a real call works between two real devices.
 
-Every piece of code has now been built and verified working without waiting on either of
-those — `TwilioVoiceAdapter` and `ios-ci.yml`'s full sign-and-upload pipeline are both done and
-proven, see Phase 4 above. What's left in this phase is purely the two-iPhone device test itself.
+Every piece of code and every setup step has now been built, configured, and verified
+working — `TwilioVoiceAdapter`, `ios-ci.yml`'s full sign-and-upload pipeline, and the App Store
+Connect side are all done and proven, see Phase 4 above. What's left in this phase is purely the
+two-iPhone device test itself, whenever both phones are on hand.
 
 See the table in the approved build plan / SETUP.md for the full list beyond this and what each
 requires.
