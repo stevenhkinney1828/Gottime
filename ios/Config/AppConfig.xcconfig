@@ -8,6 +8,12 @@
 //
 // The service_role/secret key never appears here, or anywhere under ios/ -- it stays in the
 // root .env (gitignored) and, later, GitHub Actions secrets for Edge Function deployment only.
+//
+// These two values are ALSO duplicated as literals directly in project.yml's
+// INFOPLIST_KEY_GTSupabaseProjectRef/INFOPLIST_KEY_GTSupabaseAnonKey settings (not referenced
+// via $(GT_SUPABASE_PROJECT_REF)-style substitution from here) -- a real crash on the first
+// real device launch traced to that substitution never actually reaching the compiled
+// Info.plist. Update BOTH files if these values ever change. See DECISIONS.md.
 
 GT_SUPABASE_PROJECT_REF = wraowtlpekpmpekkcquq
 GT_SUPABASE_ANON_KEY = sb_publishable_DbHsYI9HsdbqQ4rUM0Lb_w_bdi25XpF

@@ -1114,3 +1114,43 @@ This closes out the last piece of Phase 4 that was ever code-shaped. What remain
 two-iPhone device test itself, and creating an Internal Testing group so those phones can
 install the build already sitting in TestFlight — is pure device/UI action with no remaining
 engineering uncertainty in the pipeline underneath it.
+
+## First real launch crash: untested xcconfig-to-Info.plist wiring never actually worked
+
+The owner's own first real launch — tapping Sign in with Apple on a real iPhone — crashed
+immediately. Got the real crash report (`.crash` file + `feedback.json`, both pulled directly
+from App Store Connect's TestFlight → Crashes section) rather than guess from the symptom
+description alone, and the stack trace told a precise, different story than the reported
+timing suggested: the trap wasn't in the sign-in code at all, it was `SupabaseClientFactory.
+makeClient()`'s own deliberate `fatalError` (`SupabaseClientFactory.swift:19`), called from
+`AppEnvironment.live()` at app-launch time, before the sign-in screen is even meaningfully
+interactive — the "as soon as I tapped it" timing was the owner's honest best read of a
+launch-time crash, not literally caused by the tap.
+
+**Root cause, once traced precisely**: `INFOPLIST_KEY_GTSupabaseProjectRef`/
+`INFOPLIST_KEY_GTSupabaseAnonKey` were the *only* `INFOPLIST_KEY_*` settings in `project.yml`
+using `$(GT_SUPABASE_PROJECT_REF)`-style xcconfig variable substitution rather than a plain
+literal value — every other one (`CFBundleDisplayName`, `CFBundleIconName`,
+`UISupportedInterfaceOrientations`, `ITSAppUsesNonExemptEncryption`) is a literal, and all of
+those are confirmed working (the display name and icon both show correctly). That substitution
+path had never been exercised even once before this exact launch: Debug/Simulator builds
+always use `.mock()` (never calling `SupabaseClientFactory.makeClient()` at all), so nothing in
+Phases 0-3, and none of the several CI rounds earlier in Phase 4, ever actually read these two
+values back out of a real compiled Info.plist — only this first real device launch did.
+
+Rather than keep guessing at exactly why the substitution didn't reach the compiled binary
+(researched this specifically — confirmed `INFOPLIST_KEY_*` synthesis does support arbitrary
+custom keys generally, not just Apple-defined ones, so that wasn't it; couldn't get fully
+conclusive evidence on the `$(...)`-substitution-specifically question without another real
+device round-trip, which is expensive here unlike a CI retry), fixed it by eliminating the
+untested mechanism entirely: both settings now hold the literal value directly, matching the
+exact pattern every already-proven-working `INFOPLIST_KEY_*` setting in this file already
+uses. **`Config/AppConfig.xcconfig` still holds the values too** (for its own documented
+"why these are safe to commit" purpose) — now explicitly duplicated and cross-referenced in
+both files' comments rather than silently drifting, since nothing prevents them going out of
+sync without a reminder.
+
+**`CURRENT_PROJECT_VERSION` bumped 1 → 2** alongside this fix — Apple rejects re-uploading an
+identical build number, and per Apple's own review-scoping rules a later build of the same
+*version* (0.1.0 unchanged) shouldn't need a fresh Beta App Review, only a new version's first
+build does. Expect this fix to reach TestFlight without another review cycle.

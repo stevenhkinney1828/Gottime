@@ -48,7 +48,11 @@ settings:
     # URLSession/TLS, nothing custom.
     INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # Bumped from 1 -> 2 for the crash fix below. Apple rejects re-uploading the same build
+    # number twice, and per Apple's own review-scoping rules, a later build of the *same*
+    # version (0.1.0 unchanged) shouldn't need a fresh Beta App Review -- only the first build
+    # of a new version does.
+    CURRENT_PROJECT_VERSION: "2"
 
 packages:
   GotTimeCore:
@@ -88,8 +92,20 @@ targets:
         # Matches the App ID being registered in the Apple Developer portal for Phase 2 with
         # Sign in with Apple enabled (see DECISIONS.md/BUILD_STATUS.md) — one line to change
         # here if that registration ever needs a different bundle ID.
-        INFOPLIST_KEY_GTSupabaseProjectRef: "$(GT_SUPABASE_PROJECT_REF)"
-        INFOPLIST_KEY_GTSupabaseAnonKey: "$(GT_SUPABASE_ANON_KEY)"
+        #
+        # Literal values, not a $(GT_SUPABASE_PROJECT_REF)-style reference into
+        # Config/AppConfig.xcconfig — a real crash on the first-ever real device launch traced
+        # to SupabaseClientFactory.makeClient()'s fatalError, meaning these two specific values
+        # were the ONLY INFOPLIST_KEY_* settings in this whole file using xcconfig variable
+        # substitution rather than a plain literal, and that indirection had never been
+        # exercised even once before (Debug/Simulator always uses .mock(), never touching this
+        # code). Matching the same literal-value pattern every OTHER INFOPLIST_KEY_* setting
+        # here already uses (proven working — the display name and icon both show correctly)
+        # removes the untested mechanism entirely rather than keep guessing at why it failed.
+        # Keep this in sync with Config/AppConfig.xcconfig if these values ever change — see
+        # DECISIONS.md.
+        INFOPLIST_KEY_GTSupabaseProjectRef: "wraowtlpekpmpekkcquq"
+        INFOPLIST_KEY_GTSupabaseAnonKey: "sb_publishable_DbHsYI9HsdbqQ4rUM0Lb_w_bdi25XpF"
         # AppIcon.appiconset (App/Resources/Assets.xcassets) — a real functional placeholder
         # (simple stopwatch glyph in the app's actual gtAccent color), not final branding.
         # App Store Connect rejects any upload with no icon at all, even for Internal Testing,

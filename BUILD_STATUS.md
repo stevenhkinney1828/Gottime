@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 
-**Current phase: Phase 4 — Voice proof (a real signed build is on TestFlight, the Internal Testing group is set up; only the two-iPhone device test itself remains — see bottom)**
+**Current phase: Phase 4 — Voice proof (real device testing underway; first real launch crashed on a genuine bug, root-caused from an actual crash report and fixed — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -47,7 +47,7 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ Confirmed via a fresh `ios-ci.yml` run: compiles clean, mocked UI test still passes end to end.
 - ✅ **The whole security model verified live against the real project**, exactly as the build plan called for: `backend/scripts/verify-connections-rls.ts` creates three throwaway users through the Admin API (no real Apple ID needed), then as real authenticated requests — Alice creates an invite, Bob redeems it, both can then see each other's profile, a third unconnected user (Carol) sees neither the profile nor the connection, redeeming an already-redeemed code fails, and redeeming your own invite fails. All 8 checks passed on the first real run; cleanup of all three throwaway users independently confirmed afterward via a follow-up Admin API listing, not just assumed. Script is committed and re-runnable, not a one-off — see `backend/README.md`.
 
-## Phase 4 — Voice proof (the hard thing) ✅ all code built (backend + iOS + CI signing); 🚧 blocked on owner gate for the real device test
+## Phase 4 — Voice proof (the hard thing) ✅ all code + CI signing done; 🔄 real device testing in progress, one real bug found and fixed
 - ✅ `issue-voice-token` — mints a real Twilio Voice Access Token (the exact JWT format Twilio's SDK expects: HS256, `cty: "twilio-fpa;v=1"`, `grants.identity`/`grants.voice.outgoing.application_sid`), identity = the caller's own Supabase user id. Tested including an independent HMAC-signature re-verification (5/5 tests), not just checking the decoded claims look right.
 - ✅ `twiml-voice` — the webhook Twilio calls when the caller's Voice SDK connects; looks up the `call_sessions` row, verifies the request's `From: client:<identity>` actually matches that session's caller (closes a real, if narrow, spoofing gap — a client could otherwise supply any call_session_id as its own outgoing param), and returns `<Dial timeLimit="..."><Client statusCallbackEvent="..." statusCallback="...">` TwiML routing to the recipient. 7/7 tests passing.
 - ✅ `twilio-status-callback` — records `ringing_at`/`connected_at` as Twilio itself reports them (server-side confirmation that "the timer starts only on connection," not just the client's own clock). Deliberately treats the terminal "completed" event as a no-op for now — distinguishing early-hangup from on-schedule-timeout needs Phase 6's full duration-enforcement design, not a guess made here. 4/4 tests passing.
@@ -59,7 +59,8 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ **Caught a real decoding gap before it could surface on a device**: `FunctionsClient`'s default JSON decoder (unlike `PostgrestClient`'s) doesn't parse ISO 8601 date strings, which would have made the adapter's `request-call` response fail to decode its three timestamp fields. Fixed by passing an explicit custom decoder, verified against the SDK's actual `invoke(_:options:decoder:)` signature before relying on it. See DECISIONS.md for the full reasoning.
 - ✅ **Confirmed via a real `ios-ci.yml` run, not just a local read-through**: the new Twilio Voice SDK SPM dependency resolves, the whole App target (including `TwilioVoiceAdapter.swift`) builds clean, and GotTimeUITests' mocked canonical-flow test still passes unaffected — Debug still defaults to `.mock()`, so this graduation was invisible to that test by design. The signing job's own guard correctly no-op'd (no Apple credentials configured yet), exactly as designed since Phase 0.
 - ✅ **`ios-ci.yml`'s `sign-and-upload` job fully implemented and verified working end to end — a real signed GotTime build has reached TestFlight for the first time.** Getting here took four real, previously-unverifiable issues, each only reachable after fixing the last (no fake credential can stand in for Apple's actual signing infrastructure, so each one only surfaced on an actual attempt): an invalid `.p8` key (a Notepad copy-paste artifact), automatic signing defaulting to a Development-only profile (needs a registered device this account doesn't have), the API key needing Admin-level access rather than App Manager (cloud-managed signing specifically requires it), and this project never having had an app icon at all (fixed with a real placeholder — a stopwatch glyph in the app's actual `gtAccent` color — plus a related orientation-declaration fix). Every fix was root-caused from the real CI error text and cross-checked against current documentation before applying, never guessed. Full round-by-round account in DECISIONS.md.
-- 🚧 Two physical iPhones still needed too, for the actual two-way call test once a signed build reaches TestFlight.
+- ✅ **Real device testing began — both iPhones on hand, TestFlight installed, first real launch attempted.** Hit a real crash on the very first Sign in with Apple attempt. Got the actual crash report from App Store Connect (TestFlight → Crashes) rather than guess, and it told a different story than the reported symptom timing suggested: the trap was in `SupabaseClientFactory.makeClient()` at app-launch time, not the sign-in code itself. **Root cause:** the Supabase project ref/anon key `INFOPLIST_KEY_*` settings were the only ones in `project.yml` using xcconfig variable substitution instead of a literal value — every other `INFOPLIST_KEY_*` setting (already proven working) is a literal — and that substitution path had never been exercised even once before this exact launch, since Debug/Simulator always uses the mocked backend. Fixed by making these two literals too, matching the proven pattern; `CURRENT_PROJECT_VERSION` bumped so the fixed build can upload (shouldn't need a fresh Beta Review — same app version, just a new build). Full account in DECISIONS.md.
+- 🔄 Waiting on the fixed build to clear CI and reach TestFlight, then a re-test of Sign in with Apple on a real device.
 
 ## Phase 5 — CallKit / PushKit
 ⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).
@@ -89,17 +90,15 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 8. ~~Twilio account + billing~~ — created, funded, Account SID/Auth Token/API Key SID+Secret supplied and stored; TwiML Application created and verified issuing real tokens
 9. ~~App Store Connect API key + app record~~ — Admin-role Team API key created, app registered as "GotTime? Calling", all four secrets saved; **CI now genuinely signs and uploads a real build to TestFlight, verified by an actual successful run**, not just by the pipeline existing.
 10. ~~Internal Testing group~~ — "Family Tester" group created, automatic build distribution turned on, owner added as a tester (adding a tester turned out to be a separate screen from creating the group itself — normal App Store Connect behavior, not a bug).
+11. ~~Two physical iPhones~~ — both on hand, TestFlight installed, real device testing actually underway (see the crash finding above).
 
-## Owner gate now blocking (Phase 4)
-One thing left before real two-way voice calling can be tested for real: **two physical
-iPhones** on hand, both with the TestFlight app installed and the GotTime build ready to open.
-This is the one thing in this whole phase with no software substitute — the entire point of it
-is proving a real call works between two real devices.
-
-Every piece of code and every setup step has now been built, configured, and verified
-working — `TwilioVoiceAdapter`, `ios-ci.yml`'s full sign-and-upload pipeline, and the App Store
-Connect side are all done and proven, see Phase 4 above. What's left in this phase is purely the
-two-iPhone device test itself, whenever both phones are on hand.
+## No owner gate currently blocking — real device testing is in progress
+Every setup gate for this phase is cleared. What's happening now is the actual real-device
+testing this whole phase exists for: install the build, sign in, connect, place a real call.
+The first real launch surfaced one genuine bug (see above, now fixed) — expect this kind of
+finding to keep happening for a bit as more of the app runs for the first time ever on real
+hardware, the same way the CI signing pipeline needed several real rounds before every part of
+it had actually been exercised.
 
 See the table in the approved build plan / SETUP.md for the full list beyond this and what each
 requires.
