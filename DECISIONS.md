@@ -1296,3 +1296,50 @@ entries, which named an exact, verified root cause before calling it done. If th
 turn out to be the actual cause, the improved error message will show the *real* Postgres
 exception text on the very next attempt, which should make whatever's actually wrong obvious
 immediately rather than needing a fourth guess.
+
+## Fourth bug found, this time via direct database investigation, not another build round-trip
+
+Two new real-device reports arrived close together: a call to the newly-connected brother
+returned "Call failed," and — after the owner deleted and recreated both accounts to
+troubleshoot — a fresh connection attempt seemed to hit the exact same "didn't work" error
+again. Rather than ship another guess, queried the live database directly (service-role
+credentials, already held for exactly this kind of verification) instead of waiting on another
+TestFlight round-trip.
+
+**The data told a different story than the reports suggested.** `connection_invites` and
+`connections` showed a real, active connection between the owner's new account and the
+brother's — created via a genuinely successful `redeem_connection_invite()` call. A second
+invite, created afterward between the same now-already-connected pair, sat unredeemed. Put
+together with `redeem_connection_invite()`'s own logic (`on conflict ... do nothing` +
+`raise exception 'Already connected'` when a pair tries to connect twice), the real sequence
+was clear: the first connection attempt actually succeeded; the app never showed it; the owner
+tried again, reasonably assuming failure; the *second* attempt was correctly rejected as
+"Already connected" — the exact same generic-looking error text as before, now technically
+accurate but deeply confusing without context.
+
+**Root cause, once that pointed the right direction**: `PeopleListView`'s `.sheet(isPresented:
+$showingAddConnection)` had no `onDismiss` handler at all, unlike the adjacent
+`.sheet(item: $selectedPerson, onDismiss: ...)` right above it in the same file. The connected-
+people list only ever loads once, on first appearance (`.task`), or on a manual pull-to-refresh
+(`.refreshable`) — nothing re-fetched it after `AddConnectionView` dismissed, successful
+connection or not. The exact same shape of bug as the onboarding one three entries back: a
+write that genuinely succeeded server-side, with nothing telling the relevant screen to notice.
+Fixed by adding the missing `onDismiss`, re-fetching unconditionally (simpler and equally
+correct whether the sheet closed via success or a plain Close tap).
+
+**A real methodology correction, made honestly rather than glossed over**: mid-investigation, an
+empty `call_sessions` table was initially read as proof `request-call` had never even been
+reached for the original failed call attempt. That conclusion didn't hold up — by the time that
+query ran, the owner had already deleted his original account to troubleshoot, and
+`call_sessions` cascade-deletes with its owning user (a deliberate Phase 2 design choice, see
+the "Account deletion cascades" entry above). An empty table after a deletion proves nothing
+about what existed *before* it; the investigation had unknowingly contaminated its own evidence.
+Caught this before shipping a fix based on the wrong conclusion, not after — the connection-
+refresh bug above was found and fixed on its own, independently-confirmed merits instead.
+
+**The original "Call failed" report is still genuinely open.** Whatever caused it may or may not
+be related to this same stale-list confusion (a first-time flow error is very plausible when the
+UI you're looking at doesn't match reality); it hasn't been independently confirmed either way.
+Next step once this build confirms the connection now displays correctly: retry the call fresh,
+and if it fails again, check `call_sessions` and Twilio's own logs *immediately*, before any
+further account changes could contaminate the evidence a second time.

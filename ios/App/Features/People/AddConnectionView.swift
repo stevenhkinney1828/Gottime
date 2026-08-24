@@ -9,6 +9,7 @@ struct AddConnectionView: View {
 
     @State private var createdInvite: ConnectionInvite?
     @State private var isCreatingInvite = false
+    @State private var createError: String?
     @State private var redeemCode = ""
     @State private var isRedeeming = false
     @State private var redeemError: String?
@@ -38,6 +39,11 @@ struct AddConnectionView: View {
                         } else {
                             Text("Create an invite code")
                         }
+                    }
+                    if let createError {
+                        Text(createError)
+                            .font(.footnote)
+                            .foregroundStyle(Color.gtDestructive)
                     }
                 }
             }
@@ -74,7 +80,12 @@ struct AddConnectionView: View {
 
     private func createInvite() async {
         isCreatingInvite = true
-        createdInvite = try? await environment.connectionService.createInvite()
+        createError = nil
+        do {
+            createdInvite = try await environment.connectionService.createInvite()
+        } catch {
+            createError = "Couldn't create a code: \(error.localizedDescription)"
+        }
         isCreatingInvite = false
     }
 

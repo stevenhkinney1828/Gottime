@@ -52,8 +52,10 @@ settings:
     # SupabaseConfig.swift plain constants, replacing INFOPLIST_KEY_* entirely. 4->5: onboarding
     # Continue-button fix (SupabaseAuthAdapter.updateFirstName wasn't re-emitting auth state).
     # 5->6: invite-redeem trim + real error surfacing -- best-effort fix, not a confirmed root
-    # cause yet, see DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "6"
+    # cause yet. 6->7: PeopleListView never refreshed after AddConnectionView dismissed --
+    # confirmed root cause (a real connection existed server-side the whole time). See
+    # DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "7"
 
 packages:
   GotTimeCore:

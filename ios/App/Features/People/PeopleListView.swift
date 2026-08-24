@@ -55,7 +55,17 @@ struct PeopleListView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAddConnection) {
+        .sheet(isPresented: $showingAddConnection, onDismiss: {
+            // Without this, a successful connection left the list showing whatever it had
+            // before AddConnectionView ever appeared — .task only runs once on first
+            // appearance, .refreshable only on a manual pull. A real connection could succeed
+            // server-side (dismiss() only fires on success) with nothing on screen ever
+            // reflecting it, making a second attempt look like the exact same failure again,
+            // now correctly (if confusingly) rejected server-side as "Already connected."
+            // Re-fetching unconditionally here — whether the sheet closed via a successful
+            // connect or just Close — is simpler and just as correct as trying to track which.
+            Task { await loadConnections() }
+        }) {
             NavigationStack { AddConnectionView() }
         }
         .task { await loadConnections() }
