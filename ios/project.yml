@@ -20,10 +20,6 @@ configs:
   Debug: debug
   Release: release
 
-configFiles:
-  Debug: Config/AppConfig.xcconfig
-  Release: Config/AppConfig.xcconfig
-
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -52,8 +48,9 @@ settings:
     # same build number twice, and per Apple's own review-scoping rules, a later build of the
     # *same* version (0.1.0 unchanged) shouldn't need a fresh Beta App Review -- only the first
     # build of a new version does. 1->2: literal-value INFOPLIST_KEY_ fix (didn't resolve the
-    # crash). 2->3: on-screen config diagnostics, see DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "3"
+    # crash). 2->3: on-screen config diagnostics (found the real cause). 3->4: real fix --
+    # SupabaseConfig.swift plain constants, replacing INFOPLIST_KEY_* entirely. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "4"
 
 packages:
   GotTimeCore:
@@ -94,19 +91,12 @@ targets:
         # Sign in with Apple enabled (see DECISIONS.md/BUILD_STATUS.md) — one line to change
         # here if that registration ever needs a different bundle ID.
         #
-        # Literal values, not a $(GT_SUPABASE_PROJECT_REF)-style reference into
-        # Config/AppConfig.xcconfig — a real crash on the first-ever real device launch traced
-        # to SupabaseClientFactory.makeClient()'s fatalError, meaning these two specific values
-        # were the ONLY INFOPLIST_KEY_* settings in this whole file using xcconfig variable
-        # substitution rather than a plain literal, and that indirection had never been
-        # exercised even once before (Debug/Simulator always uses .mock(), never touching this
-        # code). Matching the same literal-value pattern every OTHER INFOPLIST_KEY_* setting
-        # here already uses (proven working — the display name and icon both show correctly)
-        # removes the untested mechanism entirely rather than keep guessing at why it failed.
-        # Keep this in sync with Config/AppConfig.xcconfig if these values ever change — see
-        # DECISIONS.md.
-        INFOPLIST_KEY_GTSupabaseProjectRef: "wraowtlpekpmpekkcquq"
-        INFOPLIST_KEY_GTSupabaseAnonKey: "sb_publishable_DbHsYI9HsdbqQ4rUM0Lb_w_bdi25XpF"
+        # Supabase project ref/anon key are NOT here or in Info.plist at all anymore — two real
+        # device launches proved custom INFOPLIST_KEY_* settings never actually synthesize into
+        # this project's compiled Info.plist (only real, Apple-defined keys do; confirmed via an
+        # on-screen Bundle.main.infoDictionary dump showing every standard key present but
+        # neither custom one anywhere in the list). They're now plain Swift constants instead —
+        # see SupabaseConfig.swift. See DECISIONS.md for the full story.
         # AppIcon.appiconset (App/Resources/Assets.xcassets) — a real functional placeholder
         # (simple stopwatch glyph in the app's actual gtAccent color), not final branding.
         # App Store Connect rejects any upload with no icon at all, even for Internal Testing,

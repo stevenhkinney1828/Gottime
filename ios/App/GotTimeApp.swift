@@ -5,27 +5,24 @@ import SwiftUI
 struct GotTimeApp: App {
     var body: some Scene {
         WindowGroup {
-            RootView()
+            ContentView()
+                .environment(\.appEnvironment, Self.resolvedEnvironment())
         }
     }
-}
 
-/// Splits out from GotTimeApp so the Release path can check config safety before ever
-/// constructing a real AppEnvironment, instead of crashing with no on-screen detail — see
-/// SupabaseClientFactory.diagnoseConfig()/ConfigDiagnosticView, both TEMPORARY, added to
-/// root-cause a real launch crash that survived one already-attempted fix (see DECISIONS.md).
-private struct RootView: View {
-    var body: some View {
+    /// Release builds (what TestFlight ships — the only way the owner's own iPhone ever gets
+    /// this app, with no local Mac/Xcode to run a scheme override from) always use the real
+    /// backend; anything else would mean a real install silently ran against fake data forever.
+    /// Debug builds (what ios-ci.yml's Simulator job and GotTimeUITests run) default to mocked
+    /// so nothing about the now-passing canonical-flow test or Xcode Previews changes, with
+    /// GOTTIME_USE_LIVE_BACKEND=1 as a scheme-level opt-in for whoever eventually has Xcode
+    /// available to manually test the real Supabase-backed flow.
+    private static func resolvedEnvironment() -> AppEnvironment {
         #if DEBUG
         let useLiveBackend = ProcessInfo.processInfo.environment["GOTTIME_USE_LIVE_BACKEND"] == "1"
-        ContentView().environment(\.appEnvironment, useLiveBackend ? .live() : .mock())
+        return useLiveBackend ? .live() : .mock()
         #else
-        switch SupabaseClientFactory.diagnoseConfig() {
-        case .ok:
-            ContentView().environment(\.appEnvironment, .live())
-        case .missing(let details):
-            ConfigDiagnosticView(details: details)
-        }
+        return .live()
         #endif
     }
 }

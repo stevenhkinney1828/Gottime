@@ -1188,3 +1188,47 @@ already proven working elsewhere in this exact codebase (`ContentView.callOverla
 `switch`-with-heterogeneous-view-cases), and the Simulator CI job exercises this same `RootView`
 code path in Debug/mocked mode, so a real compile problem should surface there, fast, before the
 much slower archive-and-upload cycle even starts.
+
+## Root cause found, definitively: custom INFOPLIST_KEY_* settings never synthesize here at all
+
+Build 3 (the on-screen diagnostics) reached the owner's phone and answered the question
+outright. The dump of `Bundle.main.infoDictionary` showed 31 real keys — every standard,
+Apple-defined `INFOPLIST_KEY_*` setting in this project *is* present and correct
+(`CFBundleDisplayName`, `UISupportedInterfaceOrientations`, `ITSAppUsesNonExemptEncryption`,
+etc.) — but **neither `GTSupabaseProjectRef` nor `GTSupabaseAnonKey` appears anywhere in the
+list at all.** Not empty, not wrong — completely absent from the compiled Info.plist. This
+directly contradicts general web research done earlier ("`INFOPLIST_KEY_*` synthesis supports
+arbitrary custom keys, not just Apple-defined ones") — that research was wrong, or described a
+different mechanism/Xcode version than what this project's actual toolchain does. Direct,
+empirical evidence from the real compiled binary overrides it: in this project,
+`GENERATE_INFOPLIST_FILE`'s synthesis only recognizes real, Apple-defined Info.plist keys.
+Custom keys were never going to work here, which is exactly why literal-vs-`$(...)`-substitution
+made no difference between build 1 and build 2 — the problem was never about the *value*, it was
+that the *key* itself was silently dropped either way.
+
+**Fix: stopped routing these two values through Info.plist at all.** Added
+`SupabaseConfig.swift` — a plain `enum` with the two values as compiled-in Swift `static let`
+constants, matching them exactly to what `AppConfig.xcconfig` held. A compiled-in constant has
+no indirection layer left to trust; it either compiles (and is then always present, by
+construction) or the build fails outright, closing off the entire class of "silently missing at
+runtime" failure this whole multi-round debugging session was chasing. `SupabaseClientFactory.
+makeClient()` simplified back down to just building the URL and constructing the client — no
+more Bundle/Info.plist reads, no more guard chain, no more possibility of the fatalError firing
+for this reason ever again.
+
+**Removed, not left around, once no longer needed**: `Config/AppConfig.xcconfig` (deleted
+entirely — its sole purpose was feeding these two values into Info.plist, which never worked;
+keeping it would leave dead, misleading configuration behind), the `configFiles:` block in
+`project.yml` that referenced it, the two `INFOPLIST_KEY_GTSupabase*` settings, and — since the
+failure mode they detected can no longer occur — `ConfigDiagnosticView.swift` and
+`SupabaseClientFactory.diagnoseConfig()` from the previous entry, restoring `GotTimeApp.swift`
+to its original, simpler structure. Matches this session's own stated discipline for temporary
+diagnostics: built to find the real answer, removed the moment that answer was in hand, not
+left around as dead code mistaken for permanent infrastructure.
+
+**Lesson for future custom Info.plist values in this project**: don't use
+`INFOPLIST_KEY_<CustomName>` build settings for anything not in Apple's own known key set — it
+silently does nothing here, with no build warning or error. A plain Swift constant (or, if a
+real per-build/per-environment value is ever needed, an actual authored `Info.plist` file
+merged via `INFOPLIST_FILE` rather than relying on synthesis) is the reliable path for this
+toolchain.
