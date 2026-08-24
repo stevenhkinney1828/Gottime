@@ -1264,3 +1264,35 @@ user stays on `OnboardingView`, exactly today's behavior, not a new regression.
 Third real, previously-latent bug found this way in a row (after the two Info.plist rounds) —
 each one only reachable by an actual account doing an actual first-time thing on an actual
 device, the exact class of bug this whole phase's manual two-person test exists to surface.
+
+## Invite redemption failing both directions: best-effort fix plus better diagnostics, honestly labeled as such
+
+With onboarding fixed, the next real step — redeeming a connection invite between two real
+accounts — failed both directions (owner→brother and brother→owner), each showing only the
+view's own generic `"That code didn't work — check it and try again."`.
+
+**Unlike the previous two bugs, static reading alone didn't turn up a single, confident root
+cause this time.** Read `AddConnectionView`, `SupabaseConnectionAdapter.redeemInvite`, and the
+`redeem_connection_invite()` SQL function (0006_rls_policies.sql) end to end: the RPC parameter
+name (`p_invite_code`) matches exactly, the invite alphabet is already uppercase-only (ruling
+out a case mismatch against the text field's `.textInputAutocapitalization(.characters)`), and
+this exact SQL function already passed a real, live 8-check verification run in Phase 3
+(`verify-connections-rls.ts`) — strong evidence the *logic* itself is sound. What's never been
+exercised before is the real Swift client's own `.rpc(...)` call path on a real device, the
+same category every bug so far this session has come from.
+
+Rather than guess at a specific cause with no strong evidence for it, fixed the one thing that
+was unambiguously wrong regardless — the generic catch-all error message discards
+`PostgrestError`'s own `message` (it conforms to `LocalizedError`, so `redeem_connection_invite`'s
+own exception text — `"Invalid invite code"`, `"Invite has expired"`, `"Cannot redeem your own
+invite"`, `"Already connected"` — was always one `error.localizedDescription` away and just
+never being shown) — and applied one genuinely safe, no-downside defensive fix alongside it:
+trimming the entered code before sending, since a code is retyped by eye off another screen,
+not pasted, and a stray keyboard-inserted space would fail the server's exact-match lookup with
+no visible sign anything was wrong.
+
+**Recorded honestly as a best-effort attempt, not a confirmed fix** — unlike the two previous
+entries, which named an exact, verified root cause before calling it done. If the trim doesn't
+turn out to be the actual cause, the improved error message will show the *real* Postgres
+exception text on the very next attempt, which should make whatever's actually wrong obvious
+immediately rather than needing a fourth guess.

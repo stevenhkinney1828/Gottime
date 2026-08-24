@@ -82,10 +82,21 @@ struct AddConnectionView: View {
         isRedeeming = true
         redeemError = nil
         do {
-            _ = try await environment.connectionService.redeemInvite(code: redeemCode)
+            // Trimmed defensively — a keyboard-inserted leading/trailing space would make an
+            // otherwise-correct code fail the server's exact-match lookup with no visual sign
+            // anything was wrong, since the code is retyped by eye off another screen, not
+            // pasted.
+            let code = redeemCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = try await environment.connectionService.redeemInvite(code: code)
             dismiss()
         } catch {
-            redeemError = "That code didn't work — check it and try again."
+            // Surfaces the real reason (e.g. Postgres's own "Invalid invite code"/"Invite has
+            // expired"/"Cannot redeem your own invite"/"Already connected" from
+            // redeem_connection_invite(), since PostgrestError conforms to LocalizedError)
+            // rather than a single generic message that can't be told apart from any other
+            // failure — this exact class of real-device-only bug has repeatedly turned out to
+            // need the actual error text to diagnose, not another guess (see DECISIONS.md).
+            redeemError = "That code didn't work: \(error.localizedDescription)"
         }
         isRedeeming = false
     }
