@@ -1154,3 +1154,37 @@ sync without a reminder.
 identical build number, and per Apple's own review-scoping rules a later build of the same
 *version* (0.1.0 unchanged) shouldn't need a fresh Beta App Review, only a new version's first
 build does. Expect this fix to reach TestFlight without another review cycle.
+
+## Same crash survived the literal-value fix — added on-screen diagnostics instead of guessing again
+
+Build 2 (with the literal-value fix above) reached the owner's phone via Internal Testing's
+automatic distribution — confirmed he was actually running build 2 (not a stale build 1) before
+treating this as a real finding, matching the same discipline as every crash report this
+session. It crashed identically: same exact stack trace, same exact line
+(`SupabaseClientFactory.swift:19`), confirmed byte-for-byte against the new `.crash` file. The
+literal-vs-`$(...)`-substitution theory was wrong, or at least incomplete.
+
+**Rather than guess a third time, restructured the app to show the real problem on screen
+instead of crashing opaquely.** `SupabaseClientFactory.diagnoseConfig()` (new, non-crashing)
+checks the same two Info.plist keys `makeClient()` already does, and on failure returns a
+detailed, copyable dump: both keys' actual values (or `MISSING`), the bundle identifier, and
+every key that *did* make it into `Bundle.main.infoDictionary` — enough to distinguish "these
+two specific keys didn't synthesize" from "the whole `INFOPLIST_KEY_*` mechanism silently
+isn't working at all" from something else entirely. `GotTimeApp.swift` restructured (`RootView`,
+a new small view) so Release builds check this before ever constructing a real
+`AppEnvironment`, showing `ConfigDiagnosticView` (new) instead of `ContentView` when the check
+fails — text is `.textSelection(.enabled)` specifically so the owner can copy-paste the exact
+diagnostic text directly off the phone screen rather than transcribe a screenshot. `makeClient()`
+itself is untouched, kept as a last-resort safety net that should now never actually fire.
+
+**Both pieces are explicitly TEMPORARY**, called out as such in their own doc comments —
+matching exactly how the Phase 1 ZStack debugging session's print-tracing and `gtDebugState`
+diagnostics were treated: build what's needed to see the real answer, remove it once the root
+cause is confirmed and actually fixed, don't leave debugging scaffolding mistaken for permanent
+infrastructure.
+
+Could not compile-check this locally (no Mac, as always) — reviewed carefully against a pattern
+already proven working elsewhere in this exact codebase (`ContentView.callOverlay`'s
+`switch`-with-heterogeneous-view-cases), and the Simulator CI job exercises this same `RootView`
+code path in Debug/mocked mode, so a real compile problem should surface there, fast, before the
+much slower archive-and-upload cycle even starts.
