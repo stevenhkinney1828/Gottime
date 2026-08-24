@@ -49,8 +49,10 @@ settings:
     # *same* version (0.1.0 unchanged) shouldn't need a fresh Beta App Review -- only the first
     # build of a new version does. 1->2: literal-value INFOPLIST_KEY_ fix (didn't resolve the
     # crash). 2->3: on-screen config diagnostics (found the real cause). 3->4: real fix --
-    # SupabaseConfig.swift plain constants, replacing INFOPLIST_KEY_* entirely. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "4"
+    # SupabaseConfig.swift plain constants, replacing INFOPLIST_KEY_* entirely. 4->5: onboarding
+    # Continue-button fix (SupabaseAuthAdapter.updateFirstName wasn't re-emitting auth state).
+    # See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "5"
 
 packages:
   GotTimeCore:

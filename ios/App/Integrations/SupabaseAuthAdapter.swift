@@ -133,6 +133,19 @@ public final class SupabaseAuthAdapter: NSObject, AuthService, @unchecked Sendab
             .update(["first_name": firstName])
             .eq("id", value: userId)
             .execute()
+        // A raw table UPDATE never fires Supabase's own authStateChanges (that stream is only
+        // ever about auth session events — sign in/out/token refresh — never database row
+        // writes), so without this, OnboardingView's Continue button would silently update the
+        // database and then never advance: ContentView only switches away from OnboardingView
+        // when a *new* authState arrives, and nothing here was producing one. Never caught by
+        // mocked/UI testing because MockAuthService's own updateFirstName does call setState(),
+        // masking the gap — this only surfaced on a real device, the first time a real account
+        // ever went through onboarding with no name from Sign in with Apple. Re-fetching (not
+        // constructing a Profile locally) matches this adapter's existing single-source-of-truth
+        // philosophy for profiles (see the type's own doc comment above).
+        if let profile = try? await fetchProfile(userId: userId) {
+            continuation.yield(.signedIn(profile))
+        }
     }
 
     private func fetchProfile(userId: UUID) async throws -> Profile {

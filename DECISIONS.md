@@ -1232,3 +1232,35 @@ silently does nothing here, with no build warning or error. A plain Swift consta
 real per-build/per-environment value is ever needed, an actual authored `Info.plist` file
 merged via `INFOPLIST_FILE` rather than relying on synthesis) is the reliable path for this
 toolchain.
+
+## Onboarding's Continue button did nothing: a real bug, caught on the first real account ever
+
+With sign-in finally working, the owner reached onboarding ("What should we call you?") for
+the first time on a real device — and tapping Continue appeared to do nothing at all.
+
+Read `OnboardingView`/`SupabaseAuthAdapter`/`MockAuthService` side by side rather than guess,
+and the gap was immediate: `SupabaseAuthAdapter.updateFirstName()` did a raw PostgREST
+`UPDATE` on the `profiles` table and stopped there. `ContentView` only ever leaves
+`OnboardingView` when a *new* `authState` value arrives via `authStateStream` (`profile.
+hasCompletedOnboarding` flips true once `firstName` is set) — and that stream is fed from
+Supabase's own `authStateChanges`, which is strictly about auth *session* events (sign in/out,
+token refresh). A plain table write was never going to fire it. The name genuinely saved to the
+database every time; the screen just had no way to find out.
+
+**Never caught by any mocked or UI test because `MockAuthService`'s own `updateFirstName` does
+the right thing** — it calls `setState(.signedIn(profile))` after updating, correctly
+re-emitting state. The mock's correctness masked the real adapter's gap for the entire project,
+since nothing before this exact moment had ever run the real `SupabaseAuthAdapter` through a
+fresh account with no name from Sign in with Apple (the only way to reach onboarding at all).
+
+**Fix**: after the update succeeds, re-fetch the profile (reusing the adapter's existing
+`fetchProfile(userId:)` helper — not constructing a `Profile` locally) and yield it as a new
+`.signedIn(profile)` state, matching this adapter's own already-stated philosophy of treating
+the `profiles` table, not cached client-side state, as the single source of truth. Wrapped in
+`try?`, matching the same risk tolerance already used elsewhere in this file for a
+should-be-transient re-fetch after a write that already succeeded — worst case on failure, the
+user stays on `OnboardingView`, exactly today's behavior, not a new regression.
+
+Third real, previously-latent bug found this way in a row (after the two Info.plist rounds) —
+each one only reachable by an actual account doing an actual first-time thing on an actual
+device, the exact class of bug this whole phase's manual two-person test exists to surface.
