@@ -43,6 +43,19 @@ settings:
     # build — accurate here since networking (Supabase, Twilio, APNs) is all system
     # URLSession/TLS, nothing custom.
     INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+    # Required for the Twilio Voice SDK to access the microphone on any connected call (both
+    # outgoing and incoming) -- without this, iOS refuses microphone access outright the moment
+    # a call actually reaches "connected." Every call attempt so far has failed before ever
+    # reaching that point, so this gap hadn't surfaced yet; added proactively while wiring up
+    # real incoming calls, the same way the App Store icon/orientation gaps were caught before
+    # they became a separate failed round-trip. See DECISIONS.md.
+    INFOPLIST_KEY_NSMicrophoneUsageDescription: "GotTime? needs your microphone during a call so the other person can hear you."
+    # "voip" lets PushKit wake the app for an incoming call notification; "audio" keeps an
+    # already-connected call's audio session alive if the app is backgrounded mid-call. Space-
+    # separated string, matching the same array-value convention already confirmed working for
+    # INFOPLIST_KEY_UISupportedInterfaceOrientations above (verified present via the on-screen
+    # Info.plist dump earlier, not assumed).
+    INFOPLIST_KEY_UIBackgroundModes: "voip audio"
     MARKETING_VERSION: "0.1.0"
     # Bumped each time a real device test needs a fresh build. Apple rejects re-uploading the
     # same build number twice, and per Apple's own review-scoping rules, a later build of the
@@ -53,9 +66,11 @@ settings:
     # Continue-button fix (SupabaseAuthAdapter.updateFirstName wasn't re-emitting auth state).
     # 5->6: invite-redeem trim + real error surfacing -- best-effort fix, not a confirmed root
     # cause yet. 6->7: PeopleListView never refreshed after AddConnectionView dismissed --
-    # confirmed root cause (a real connection existed server-side the whole time). See
-    # DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "7"
+    # confirmed root cause (a real connection existed server-side the whole time). 7->8:
+    # PushKitAdapter -- real calls always ended in Twilio-side "no-answer" because neither
+    # device had ever registered to receive one; a genuine Phase-5-into-Phase-4 dependency
+    # discovered only by testing a real call. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "8"
 
 packages:
   GotTimeCore:
@@ -88,6 +103,13 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        # Required for PushKit VoIP push registration (TwilioVoiceSDK.register), discovered as
+        # a hard requirement when a real device test proved neither side of a call could ever
+        # receive one -- see DECISIONS.md. "production" (not "development", unlike Twilio's own
+        # quickstart samples, which target local Xcode Development-signed debug runs) because
+        # every real build here ships via TestFlight with Distribution-style signing, never a
+        # local Development-signed run.
+        aps-environment: production
     settings:
       base:
         PRODUCT_NAME: GotTime

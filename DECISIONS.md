@@ -1343,3 +1343,90 @@ UI you're looking at doesn't match reality); it hasn't been independently confir
 Next step once this build confirms the connection now displays correctly: retry the call fresh,
 and if it fails again, check `call_sessions` and Twilio's own logs *immediately*, before any
 further account changes could contaminate the evidence a second time.
+
+## The real "Call failed" cause: a genuine Phase-5-into-Phase-4 dependency, found from Twilio's own call logs
+
+With the People-list bug fixed and both real connections confirmed, the owner retried calling
+in both directions — owner → wife and wife → owner — and both failed identically. This time,
+investigated with direct API access before shipping anything: Supabase's own `edge_logs`
+proved unreliable for this (querying `function_edge_logs` for Edge Function invocation records
+returned zero rows even for calls known to have succeeded — logging retention/availability for
+this project's plan tier, not a code problem, and not worth chasing further), but `call_sessions`
+itself told a clear story — `request-call` had created a session every time (`status: "created"`),
+proving authorization and session creation both work — with `ringing_at`/`provider_call_sid`
+staying null on every attempt, meaning the call never progressed past the very first step.
+
+**Twilio's own Calls API gave the definitive answer directly**, no guessing required: the
+caller's own leg into Twilio's infrastructure succeeded every time (`status: completed`), and
+the resulting `<Dial><Client>` leg correctly targeted the right recipient identity — but ended
+in **`status: "no-answer"`**. Cross-checked against Twilio's own Voice iOS SDK documentation
+before concluding anything: receiving *any* call through `<Dial><Client>` requires the
+recipient's device to have called `TwilioVoiceSDK.register(accessToken:deviceToken:completion:)`
+with a real PushKit VoIP device token first — a hard SDK requirement, not an optional
+enhancement. Grepped `TwilioVoiceAdapter.swift` for `register` and found zero matches — this
+call had simply never been made, anywhere in the codebase.
+
+**This reveals a real gap in how the original build plan drew its phase boundary.** Phase 4
+("Voice proof... exit: foreground, unlocked, two-way audio") and Phase 5 ("CallKit/PushKit...
+register tokens") were scoped as sequential, but Phase 4's own exit criterion turns out to be
+structurally impossible without at least the registration slice of Phase 5 — there is no way
+for `<Dial><Client>` to reach a real device at all without it, foreground or not. This wasn't
+knowable from reading the spec or the SDK's outgoing-call API alone; it only became visible by
+actually testing a real call between two real devices, which is exactly what this phase's own
+two-iPhone requirement existed to surface.
+
+**Scope decision: pull forward only the minimum slice that's a hard prerequisite, not all of
+Phase 5.** Built `PushKitAdapter` (new) to register for VoIP push and route incoming invites to
+`TwilioVoiceAdapter`, reusing Twilio's own push delivery mechanism directly
+(`TwilioVoiceSDK.register`) rather than building the `register-device`/`device_registrations`
+Edge-Function-and-table path `PushService`'s original doc comment envisioned (GotTime's own
+backend sending a custom, richer APNs push, per the earlier "APNs VoIP push delivered directly,
+not via Twilio Notify" decision) — confirmed directly from Twilio's own official SwiftUI
+quickstart sample (`PushKitManager.swift`/`CallManager.swift`, read from GitHub before writing
+any code against it) that `TwilioVoiceSDK.register` alone, with no custom push involved, is
+sufficient for `<Dial><Client>` to work at all. The richer custom-payload path stays available
+as a genuine later enhancement, not a rewrite. Full native CallKit UI (lock-screen incoming
+calls, `CXProvider` reporting) is *also* deliberately deferred — the existing in-app
+`IncomingCallView` (built in Phase 1 explicitly as "a banner standing in for CallKit until
+Phase 5") is enough to prove real two-way audio works at all, which is this phase's actual bar.
+
+**Every new SDK/API surface was verified against real, primary sources before writing code
+against it, not assumed**, given the cost of guessing wrong here (another real device
+round-trip) was high and nothing about this exact integration had been built before:
+- `TwilioVoiceSDK.register`/`.handleNotification`, `PKPushRegistryDelegate`, and
+  `NotificationDelegate`'s exact method signatures (`callInviteReceived(callInvite:)`,
+  `cancelledCallInviteReceived(cancelledCallInvite:error:)`) — all confirmed directly from
+  Twilio's official quickstart source, not recalled from memory.
+- `CallInvite.customParameters` (`[String: String]?`) for reading the embedded
+  `callSessionId` on the receiving end, matching what `startCall` already embeds on the
+  sending end — confirmed via Twilio's own docs.
+- `CancelledCallInvite` doesn't expose a local call UUID directly, only `callSid` — matching
+  the quickstart's own matching strategy (compare against the still-held `CallInvite`'s own
+  `callSid`, which does carry the UUID) rather than assuming a more convenient API existed.
+- `call_sessions`' RLS policy (`call_sessions_select_participant`) already correctly allows a
+  recipient to read their own incoming session — checked, not assumed, before relying on it
+  for the caller-profile/session lookup on an incoming push.
+- The required entitlement/Info.plist keys (`aps-environment`, `UIBackgroundModes` including
+  `voip`/`audio`) — read directly from Twilio's own quickstart's `.entitlements`/`Info.plist`,
+  with `aps-environment` deliberately set to `production` (not the quickstart's own
+  `development`) since every real build here ships via TestFlight with Distribution-style
+  signing, never a local Xcode Development-signed run.
+- `INFOPLIST_KEY_UIBackgroundModes`' array-value syntax — no external documentation gave a
+  confident answer, so this leaned on direct, already-verified precedent from this exact
+  project instead: `INFOPLIST_KEY_UISupportedInterfaceOrientations` (also array-typed) is
+  already confirmed synthesizing correctly via a space-separated string, per the on-screen
+  Info.plist dump from the earlier crash investigation.
+
+**Also added `NSMicrophoneUsageDescription` proactively**, not reactively — every real call
+attempt so far has failed before ever reaching "connected," so a missing microphone permission
+key has never had a chance to surface yet, but it unconditionally would the moment one does
+(iOS refuses microphone access outright without this key, for any app). Fixing it now avoids
+turning it into a fifth separate failed round-trip once incoming calls start working.
+
+**Known, deliberately-accepted gap, recorded rather than silently left**: a cancelled incoming
+invite (caller gives up before the recipient answers) clears `TwilioVoiceAdapter`'s own
+`pendingInvite` state correctly, but `CallCoordinator`'s `.callEnded` handling only reacts once
+`activeCall` is set — an incoming call that's never answered doesn't reach that state, so the
+in-app incoming-call banner could keep showing after the caller has actually hung up. Spec
+section 16 edge-case territory, not a blocker for proving the core mechanism works; worth a
+proper look once real two-way audio is confirmed.

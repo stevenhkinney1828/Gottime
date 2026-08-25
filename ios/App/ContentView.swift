@@ -13,6 +13,7 @@ struct ContentView: View {
     @Environment(\.appEnvironment) private var environment
     @State private var coordinator: CallCoordinator?
     @State private var authState: AuthState = .signedOut
+    @State private var hasRequestedPushRegistration = false
 
     var body: some View {
         ZStack {
@@ -34,6 +35,17 @@ struct ContentView: View {
             }
             for await state in environment.authService.authStateStream {
                 authState = state
+                // Only once fully signed in (not mid-onboarding) — registering earlier would
+                // work mechanically (PushKitAdapter tolerates it, see its own doc comment) but
+                // there's no reason to request VoIP push permission before there's an account
+                // to actually receive a call on. The `hasRequestedPushRegistration` guard is
+                // just to avoid firing again on every subsequent signed-in state emission (e.g.
+                // the one updateFirstName now correctly triggers after onboarding) — calling
+                // registerForVoIPPushes() more than once is harmless, just wasteful.
+                if case .signedIn(let profile) = state, profile.hasCompletedOnboarding, !hasRequestedPushRegistration {
+                    hasRequestedPushRegistration = true
+                    Task { try? await environment.pushService.registerForVoIPPushes() }
+                }
             }
         }
     }

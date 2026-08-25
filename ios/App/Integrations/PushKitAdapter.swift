@@ -1,0 +1,180 @@
+import Foundation
+import GotTimeCore
+import PushKit
+import Supabase
+import TwilioVoice
+
+/// Real `PushService`: registers this device for Twilio Voice's own VoIP push delivery and
+/// routes incoming call invites to `TwilioVoiceAdapter`. `TwilioVoiceSDK.register` is what
+/// makes `<Dial><Client>` reachable at all — confirmed as a hard requirement only by testing a
+/// real call between two real devices (every attempt reached Twilio correctly but ended in
+/// "no-answer," since neither side had ever registered — see DECISIONS.md). Twilio delivers
+/// its own VoIP push once registered; no custom backend push path
+/// (`register-device`/`device_registrations`) is needed for this core mechanism, so neither is
+/// built yet — a real, if richer, enhancement left for later, not a prerequisite.
+public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
+    private let client: SupabaseClient
+    private let voiceAdapter: TwilioVoiceAdapter
+
+    private let lock = NSLock()
+    private var registry: PKPushRegistry?
+    private var latestToken: Data?
+
+    public init(client: SupabaseClient, voiceAdapter: TwilioVoiceAdapter) {
+        self.client = client
+        self.voiceAdapter = voiceAdapter
+        super.init()
+    }
+
+    // MARK: - PushService
+
+    /// Safe to call before sign-in completes — setting up the registry itself needs no auth;
+    /// only the later `TwilioVoiceAdapter.registerDeviceToken(_:)` call (triggered once a real
+    /// token arrives, see the delegate below) needs a signed-in user, and simply fails quietly
+    /// if called too early rather than blocking this method on auth state.
+    public func registerForVoIPPushes() async throws {
+        let registry = PKPushRegistry(queue: .main)
+        registry.delegate = self
+        registry.desiredPushTypes = [.voIP]
+        lock.lock()
+        self.registry = registry
+        lock.unlock()
+    }
+
+    public func currentDeviceToken() async -> String? {
+        lock.lock()
+        let token = latestToken
+        lock.unlock()
+        return token?.map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: - Incoming push -> caller profile + session lookup
+
+    /// Sequential, not concurrent (`async let`) — these are two small, fast PostgREST reads,
+    /// not a performance-sensitive path, and the simpler sequential form has no `async let`
+    /// syntax to get subtly wrong with no way to compile-check it locally.
+    private func fetchIncomingCallContext(callerId: UUID, callSessionId: UUID) async throws -> (Profile, CallSession) {
+        let profileRow: ProfileRow = try await client.from("profiles")
+            .select()
+            .eq("id", value: callerId)
+            .single()
+            .execute()
+            .value
+        let sessionRow: CallSessionTableRow = try await client.from("call_sessions")
+            .select()
+            .eq("id", value: callSessionId)
+            .single()
+            .execute()
+            .value
+        return (profileRow.profile, sessionRow.session)
+    }
+}
+
+// MARK: - PKPushRegistryDelegate
+
+extension PushKitAdapter: PKPushRegistryDelegate {
+    public func pushRegistry(_ registry: PKPushRegistry, didUpdate credentials: PKPushCredentials, for type: PKPushType) {
+        guard type == .voIP else { return }
+        lock.lock()
+        latestToken = credentials.token
+        lock.unlock()
+        Task { [voiceAdapter] in
+            try? await voiceAdapter.registerDeviceToken(credentials.token)
+        }
+    }
+
+    public func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+        guard type == .voIP else { return }
+        lock.lock()
+        latestToken = nil
+        lock.unlock()
+    }
+
+    public func pushRegistry(
+        _ registry: PKPushRegistry,
+        didReceiveIncomingPushWith payload: PKPushPayload,
+        for type: PKPushType,
+        completion: @escaping () -> Void
+    ) {
+        guard type == .voIP else {
+            completion()
+            return
+        }
+        TwilioVoiceSDK.handleNotification(payload.dictionaryPayload, delegate: self, delegateQueue: nil)
+        completion()
+    }
+}
+
+// MARK: - NotificationDelegate
+
+extension PushKitAdapter: NotificationDelegate {
+    /// `callInvite.from` arrives as `"client:<caller's Supabase user id>"` — the same identity
+    /// format `twiml-voice` already verifies server-side. `callSessionId` is the same custom
+    /// parameter `TwilioVoiceAdapter.startCall` embeds on the outgoing side. Silently drops a
+    /// malformed/unresolvable invite rather than crash or surface an error with no UI to show
+    /// it to — matches this adapter's own established risk tolerance elsewhere (`try?`).
+    public func callInviteReceived(callInvite: CallInvite) {
+        guard
+            let callerIdString = callInvite.from?.replacingOccurrences(of: "client:", with: ""),
+            let callerId = UUID(uuidString: callerIdString),
+            let callSessionIdString = callInvite.customParameters?["callSessionId"],
+            let callSessionId = UUID(uuidString: callSessionIdString)
+        else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            guard let context = try? await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId) else {
+                return
+            }
+            self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
+        }
+    }
+
+    public func cancelledCallInviteReceived(cancelledCallInvite: CancelledCallInvite, error: Error) {
+        voiceAdapter.handleCancelledCallInvite(callSid: cancelledCallInvite.callSid)
+    }
+}
+
+/// Mirrors `call_sessions`' real (snake_case) table columns directly — distinct from
+/// `TwilioVoiceAdapter`'s own `CallSessionRow`, which decodes `request-call`'s Edge Function
+/// response (camelCase JSON keys), not a raw table row. This one is read via a plain
+/// PostgREST `.from("call_sessions")` query, which already applies Postgrest's own ISO 8601
+/// date-decoding strategy by default — unlike Edge Function invocations, no custom decoder
+/// needed here.
+private struct CallSessionTableRow: Decodable {
+    let id: UUID
+    let callUuid: UUID
+    let callerId: UUID
+    let recipientId: UUID
+    let requestedDurationSeconds: Int
+    let status: CallStatus
+    let initiatedAt: Date
+    let createdAt: Date
+    let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case callUuid = "call_uuid"
+        case callerId = "caller_id"
+        case recipientId = "recipient_id"
+        case requestedDurationSeconds = "requested_duration_seconds"
+        case status
+        case initiatedAt = "initiated_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    var session: CallSession {
+        CallSession(
+            id: id,
+            callUUID: callUuid,
+            callerId: callerId,
+            recipientId: recipientId,
+            requestedDurationSeconds: requestedDurationSeconds,
+            initiatedAt: initiatedAt,
+            status: status,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}

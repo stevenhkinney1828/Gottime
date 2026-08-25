@@ -19,10 +19,11 @@ enum TwilioVoiceAdapterError: Error {
 ///
 /// Handles the caller's own side of a call completely on its own. The recipient's side
 /// (`answer`/`decline`) operates on `pendingInvite`, populated by `handleIncomingCallInvite(_:)`
-/// — not called from anywhere yet, since receiving a `CallInvite` at all requires a VoIP push,
-/// which needs `PushService`/PushKit registration (a separate, already-distinct protocol,
-/// Phase 5). This adapter is structurally complete and correct for that day one regardless;
-/// nothing here needs to change once PushKitAdapter starts feeding it real invites.
+/// — fed real invites by `PushKitAdapter` (see that type), which also calls
+/// `registerDeviceToken(_:)` below once it has a real VoIP push token. Registration turned out
+/// to be a hard requirement discovered only by testing a real call between two real devices:
+/// every attempt reached Twilio correctly but ended in "no-answer," since neither side had ever
+/// told Twilio how to reach it — see DECISIONS.md.
 public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendable {
     private let client: SupabaseClient
     public let events: AsyncStream<VoiceEvent>
@@ -120,10 +121,10 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         audioDevice.block()
     }
 
-    // MARK: - Incoming call plumbing (populated once PushKitAdapter exists — Phase 5)
+    // MARK: - Incoming call plumbing (fed by PushKitAdapter)
 
-    /// Called by the future PushKitAdapter's `NotificationDelegate.callInviteReceived(_:)` once
-    /// VoIP push registration exists. Kept as a plain method (not a NotificationDelegate
+    /// Called by `PushKitAdapter`'s `NotificationDelegate.callInviteReceived(callInvite:)` once
+    /// a real VoIP push delivers one. Kept as a plain method (not a NotificationDelegate
     /// conformance on this type) so this adapter has no PushKit dependency of its own — it only
     /// needs to be handed a `CallInvite` however one arrives.
     public func handleIncomingCallInvite(_ callInvite: CallInvite, callerProfile: Profile, session: CallSession) {
@@ -131,6 +132,48 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         pendingInvite = callInvite
         lock.unlock()
         continuation.yield(.incomingCall(session: session, callerProfile: callerProfile))
+    }
+
+    /// Called by `PushKitAdapter`'s `NotificationDelegate.cancelledCallInviteReceived(...)` when
+    /// the caller gives up before this invite is answered/declined. Takes a `callSid`, not a
+    /// UUID — `CancelledCallInvite` doesn't expose the local call UUID directly, only the
+    /// identifier from Twilio's own side, matching the SDK's own quickstart sample's matching
+    /// strategy (compare against the still-held `CallInvite`'s own `callSid`, since that one
+    /// does carry the local UUID). Clears local state so a stale invite can't be acted on
+    /// later. Does not itself clear the UI's own incoming-call presentation —
+    /// `CallCoordinator`'s `.callEnded` handling only reacts once `activeCall` is set, which an
+    /// invite that's never answered doesn't reach — a known, narrow gap (spec section 16's
+    /// edge-case list territory), not something fixable at this layer alone.
+    public func handleCancelledCallInvite(callSid: String) {
+        lock.lock()
+        let matchedUUID = pendingInvite?.callSid == callSid ? pendingInvite?.uuid : nil
+        if matchedUUID != nil { pendingInvite = nil }
+        lock.unlock()
+        if let matchedUUID {
+            continuation.yield(.callEnded(callUUID: matchedUUID))
+        }
+    }
+
+    /// Registers this device to actually *receive* calls — without this, Twilio has no route to
+    /// notify a device of an incoming `<Dial><Client>`, confirmed directly from Twilio's own
+    /// call logs after a real two-device test: the caller leg always succeeded, the callee leg
+    /// always ended in "no-answer." Reuses the same `issue-voice-token` token-minting path
+    /// `startCall` already uses for outgoing calls — the SDK's `register` call is keyed off the
+    /// token's own encoded identity, not a separate parameter.
+    public func registerDeviceToken(_ deviceToken: Data) async throws {
+        let token = try await issueVoiceAccessToken()
+        // Named distinctly from this class's own `continuation` property (the VoiceEvent
+        // stream) purely for a future reader's clarity — Swift resolves this correctly either
+        // way, since the closure parameter shadows it within this scope alone.
+        try await withCheckedThrowingContinuation { (registrationContinuation: CheckedContinuation<Void, Error>) in
+            TwilioVoiceSDK.register(accessToken: token, deviceToken: deviceToken) { error in
+                if let error {
+                    registrationContinuation.resume(throwing: error)
+                } else {
+                    registrationContinuation.resume()
+                }
+            }
+        }
     }
 
     // MARK: - Backend calls

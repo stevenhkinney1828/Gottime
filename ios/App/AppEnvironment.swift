@@ -8,9 +8,9 @@ import Supabase
 /// `.live()` uses real adapters under App/Integrations/ where they exist and falls back to
 /// GotTimeMocks for the rest — not every service needs to graduate at once for this to be
 /// useful: Phase 2 graduated `authService`, Phase 3 `connectionService`, Phase 4
-/// `voiceService`; `callHistoryService`/`pushService` stay mocked until Phase 5 (receiving a
-/// real incoming call needs PushKitAdapter to feed TwilioVoiceAdapter a CallInvite in the
-/// first place — see its handleIncomingCallInvite doc comment). `.mock()` remains the
+/// `voiceService`, and now `pushService` too — a real device test proved incoming calls
+/// structurally cannot work without it (see PushKitAdapter's own doc comment and
+/// DECISIONS.md). `callHistoryService` stays mocked for now. `.mock()` remains the
 /// default (see GotTimeApp.swift) so GotTimeUITests, Xcode Previews, and casual runs stay
 /// exactly as they were; `.live()` is opt-in via the GOTTIME_USE_LIVE_BACKEND launch-environment
 /// variable in Debug, and always-on in Release.
@@ -48,12 +48,17 @@ extension AppEnvironment {
     static func live() -> AppEnvironment {
         let mockEnv = MockEnvironment()
         let client = SupabaseClientFactory.makeClient()
+        // Constructed once, locally, and shared between voiceService and pushService rather
+        // than each holding a separate instance — PushKitAdapter needs to call two methods
+        // (registerDeviceToken/handleIncomingCallInvite) that aren't part of the VoiceService
+        // protocol surface, so it holds the concrete TwilioVoiceAdapter type directly.
+        let voiceAdapter = TwilioVoiceAdapter(client: client)
         return AppEnvironment(
             authService: SupabaseAuthAdapter(client: client),
             connectionService: SupabaseConnectionAdapter(client: client),
-            voiceService: TwilioVoiceAdapter(client: client),
+            voiceService: voiceAdapter,
             callHistoryService: mockEnv.callHistoryService,
-            pushService: mockEnv.pushService
+            pushService: PushKitAdapter(client: client, voiceAdapter: voiceAdapter)
         )
     }
 }

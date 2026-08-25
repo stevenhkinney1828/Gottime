@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
-**Current phase: Phase 4 — Voice proof (real device testing underway; first real launch crashed on a genuine bug, root-caused from an actual crash report and fixed — see bottom)**
+**Current phase: Phase 4 — Voice proof (real device testing underway; sign-in, onboarding, and connections all confirmed working after real bugs found and fixed; a slice of Phase 5 — PushKit call registration — pulled forward after discovering real calls structurally can't work without it — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -66,10 +66,17 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - 🔄 **Third issue: connecting two real accounts via invite code failed both directions** ("That code didn't work"). Unlike the previous two, static code reading didn't turn up one confident root cause — the RPC call, parameter name, and invite alphabet all check out, and this same SQL function already passed a live 8-check verification in Phase 3. Rather than guess blind, fixed what was unambiguously wrong regardless (the error message was discarding the real Postgres exception text — "Invalid invite code"/"Invite has expired"/"Cannot redeem your own invite"/"Already connected" — that was always available via `PostgrestError.localizedDescription` and just never shown) and applied one safe defensive fix alongside it (trimming the typed code, in case a keyboard-inserted space is the culprit). Recorded honestly as best-effort, not confirmed. Full account in DECISIONS.md.
 - ✅ Build 6 confirmed built, signed, and uploaded — both CI jobs green.
 - 🔄 **Fourth issue, found via direct database investigation rather than another build round-trip: the connection actually succeeded the whole time, but the People screen never refreshed to show it.** Queried `connections`/`connection_invites` directly with service-role credentials and found a real, active connection already existed — the owner's retry (reasonably assuming the first attempt failed, since nothing on screen changed) hit a second, correctly-triggered "Already connected" rejection that looked like the same failure repeating. Root cause: `PeopleListView`'s `AddConnectionView` sheet had no `onDismiss` handler, unlike the adjacent sheet in the same file — the people list only ever loaded once on first appearance or on manual pull-to-refresh, never after actually adding a connection. Fixed by re-fetching on dismiss. Also fixed a related silent-failure gap in `AddConnectionView.createInvite()` (used `try?` with no error surfacing at all, unlike the already-fixed redeem path). A real methodology mistake happened and was caught mid-investigation, not glossed over: an empty `call_sessions` table was briefly read as proof a call attempt never reached the backend, before realizing the owner's own account deletion (to troubleshoot) had cascade-deleted that evidence — see DECISIONS.md for the full, honest account. **The original "Call failed" report remains genuinely unresolved** — next step is retrying the call fresh once this build confirms the connection displays correctly, with evidence gathered immediately if it fails again.
-- ✅ Build 7 (People-list refresh fix + create-invite error surfacing) confirmed built, signed, and uploaded — both CI jobs green. Waiting on the owner to reinstall and confirm the connection now shows up automatically, then retry the actual call.
+- ✅ Build 7 confirmed working — both real connections (wife and brother) now display correctly. Owner retried the call in both directions; both failed identically.
+- 🔄 **Fifth issue, root-caused directly from Twilio's own call logs, not another guess: real calls could never work at all, because neither device had ever registered with Twilio to *receive* one.** `call_sessions` confirmed `request-call` succeeds every time (authorization and session creation both genuinely work); Twilio's own Calls API showed the caller's leg always succeeding and `<Dial><Client>` correctly targeting the right recipient, but ending in `"no-answer"` every time. Confirmed against Twilio's SDK docs: receiving any call requires `TwilioVoiceSDK.register(accessToken:deviceToken:)` with a real PushKit VoIP token first — a hard requirement never implemented anywhere in the codebase. **This reveals a genuine gap in the original phase boundary**: Phase 4's own "two-way audio" exit criterion turns out to structurally require a slice of Phase 5 (PushKit registration) that nothing before a real two-device test could have surfaced. Built `PushKitAdapter` (new) to register for VoIP push and route incoming calls to `TwilioVoiceAdapter`, using Twilio's own push delivery directly (verified sufficient from Twilio's official quickstart source) rather than building a custom backend push path — deliberately the *minimum* slice pulled forward, not all of Phase 5; full native CallKit lock-screen UI stays deferred, with the existing in-app incoming-call banner standing in, exactly as originally planned. Also proactively added the microphone permission key nothing has hit yet only because no call has ever reached "connected." One known, accepted gap recorded honestly: a cancelled incoming invite doesn't yet auto-dismiss its banner. Full technical account, including every SDK detail verified against Twilio's own source before use, in DECISIONS.md.
+- 🔄 Build 8 (PushKitAdapter) pushed; waiting on CI, then a real incoming-call test.
 
 ## Phase 5 — CallKit / PushKit
-⬜ Not started. 🚧 Will need: APNs VoIP Auth Key (.p8).
+🔄 The registration slice pulled forward into Phase 4 (`PushKitAdapter`, see above) — full
+native CallKit lock-screen UI is still ⬜ not started. 🚧 Will need: a VoIP Services
+Certificate generated via the Apple Developer Portal and uploaded to Twilio's Console (Twilio
+delivers the actual push itself, having chosen not to build a custom direct-APNs push path —
+see DECISIONS.md) — **not** the APNs Auth Key (.p8) originally anticipated here, which was for
+a different architecture this project didn't end up needing.
 
 ## Phase 6 — Timer enforcement
 ⬜ Not started.
