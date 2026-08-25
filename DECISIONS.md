@@ -1498,3 +1498,62 @@ device end to end. This entry documents the pipeline being *correctly assembled 
 confirmed via each step's own direct evidence (matched modulus, successful 201 from Twilio,
 passing tests, successful deploy) — not a claim that a real call has been tested yet. That's
 the next real-device round-trip, not a foregone conclusion.
+
+## Real retest still failed identically — added real remote diagnostics instead of guessing a third time
+
+The owner retested in both directions (5 min and 10 min) immediately after the certificate
+pipeline above was confirmed deployed. Both failed identically to every prior attempt. Checked
+Twilio's own evidence first, same discipline as the original "no-answer" investigation:
+`call_sessions` showed both attempts reached `request-call` fine (`status: "created"`) but never
+progressed to `ringing_at`; Twilio's Calls API showed the same `<Dial><Client>` → `"no-answer"`
+pattern as every attempt before the certificate work. Went further this time, since a
+plausible-but-wrong theory had already been shipped once for this exact bug (see the earlier
+"real Call failed cause" entry) — checked Twilio's own Debugger (`GET
+https://monitor.twilio.com/v1/Alerts`) and the specific failed calls' own Notifications
+subresource for any push-delivery error. **Both came back completely empty** — not "push
+attempted and rejected," but no record of a push attempt at all.
+
+**That absence is itself the evidence.** If Twilio had tried to push through the new certificate
+and failed (expired cert, wrong environment, malformed payload), that would show up as an Alert
+or a call Notification — Twilio's push infrastructure does log delivery failures. Getting
+nothing back points further upstream: Twilio likely never considered either identity
+"registered" to receive a call at all, meaning the failure is on the client side of
+`TwilioVoiceSDK.register`, not the certificate/credential just wired up.
+
+**Re-reading `PushKitAdapter.swift` with that specific question found a real, previously-unnoticed
+blind spot**: `pushRegistry(_:didUpdate:for:)` calls `voiceAdapter.registerDeviceToken(...)`
+wrapped in `try?` — any failure (expired/mismatched credential, malformed token, network error,
+anything at all) is silently discarded, and nothing before that point confirms `PKPushRegistry`
+even handed out a token in the first place. This build (build 8) has never been exercised on a
+real device before this test, so this blind spot has been present the entire time and nothing
+about the certificate work could have surfaced it — the certificate pipeline is necessary but
+evidently not sufficient, and there was no way to tell which side of that boundary the remaining
+failure was on without adding real visibility.
+
+**Chose remote diagnostics over guessing a fix blind, deliberately** — this project has no
+device console access (no local Mac/Xcode), so a `print()` statement would be invisible; two
+previous guessed fixes for the *other* crash earlier in this project both failed identically
+before on-screen diagnostics gave a real answer, and that's the same discipline applied here.
+Added three columns to `profiles` (migration `0007_push_registration_diagnostics.sql`):
+`push_registration_status` (`requested`/`registered`/`failed`), `push_registration_detail`, and
+`push_registration_updated_at`. Applied directly via the Supabase Management API's `POST
+/v1/projects/{ref}/database/query` endpoint rather than `supabase db push` — the CLI's `db push`
+failed twice for unrelated reasons (`.env`'s `SUPABASE_DB_PASSWORD` was genuinely empty, a stale
+placeholder never filled in since Phase 0; and separately, `supabase link` hit a real CLI bug on
+Windows — `AlreadyExists: FileSystem.makeDirectory` on `supabase/.temp`, reproducible even after
+deleting that directory first) — the Management API path sidesteps both and needed only the
+access token already in hand.
+
+No new RLS policy needed — `profiles_update_self` (0006) already permits a user to update their
+own row's arbitrary columns, the same policy `updateFirstName` already relies on. `PushKitAdapter`
+now writes `"requested"` the moment `registerForVoIPPushes()` runs (so a row stuck there forever
+distinguishes "PushKit itself never handed out a token" — an entitlements/provisioning question —
+from a token arriving but registration failing), then `"registered"` or `"failed"` (with the
+real error text, truncated to 500 chars) once `TwilioVoiceSDK.register`'s completion actually
+resolves. Deliberately a best-effort write (`try?` at the write itself, not the registration
+call it's reporting on) — a diagnostic failing to log itself must never compound the failure
+it exists to observe.
+
+**Genuinely not yet known**: which of the three states either phone will land in. That's the
+next thing to check, directly via the real `profiles` table, once build 9 is on both phones and
+a fresh call is attempted — not assumed here.

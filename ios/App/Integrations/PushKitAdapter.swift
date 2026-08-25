@@ -39,6 +39,12 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
         lock.lock()
         self.registry = registry
         lock.unlock()
+        // "requested" written up front, separately from "registered"/"failed" below, so a row
+        // stuck at "requested" forever is itself a diagnostic: it means PKPushRegistry never
+        // handed out a token at all (an entitlements/provisioning problem), as distinct from a
+        // token arriving but TwilioVoiceSDK.register failing (a credential/backend problem).
+        // See DECISIONS.md and migration 0007.
+        await reportPushRegistrationStatus(status: "requested", detail: nil)
     }
 
     public func currentDeviceToken() async -> String? {
@@ -68,6 +74,31 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
             .value
         return (profileRow.profile, sessionRow.session)
     }
+
+    /// Best-effort diagnostic write, not a critical-path operation: a failure here (e.g. no
+    /// signed-in session yet) is silently swallowed rather than compounding the very failure
+    /// this exists to diagnose. Writes to the caller's own `profiles` row, already permitted by
+    /// the existing `profiles_update_self` RLS policy -- no new grant needed.
+    private func reportPushRegistrationStatus(status: String, detail: String?) async {
+        struct Update: Encodable {
+            let pushRegistrationStatus: String
+            let pushRegistrationDetail: String?
+            let pushRegistrationUpdatedAt: String
+
+            enum CodingKeys: String, CodingKey {
+                case pushRegistrationStatus = "push_registration_status"
+                case pushRegistrationDetail = "push_registration_detail"
+                case pushRegistrationUpdatedAt = "push_registration_updated_at"
+            }
+        }
+        guard let userId = client.auth.currentSession?.user.id else { return }
+        let update = Update(
+            pushRegistrationStatus: status,
+            pushRegistrationDetail: detail.map { String($0.prefix(500)) },
+            pushRegistrationUpdatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        try? await client.from("profiles").update(update).eq("id", value: userId).execute()
+    }
 }
 
 // MARK: - PKPushRegistryDelegate
@@ -78,8 +109,13 @@ extension PushKitAdapter: PKPushRegistryDelegate {
         lock.lock()
         latestToken = credentials.token
         lock.unlock()
-        Task { [voiceAdapter] in
-            try? await voiceAdapter.registerDeviceToken(credentials.token)
+        Task { [weak self, voiceAdapter] in
+            do {
+                try await voiceAdapter.registerDeviceToken(credentials.token)
+                await self?.reportPushRegistrationStatus(status: "registered", detail: nil)
+            } catch {
+                await self?.reportPushRegistrationStatus(status: "failed", detail: "\(error)")
+            }
         }
     }
 

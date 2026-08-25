@@ -69,8 +69,14 @@ settings:
     # confirmed root cause (a real connection existed server-side the whole time). 7->8:
     # PushKitAdapter -- real calls always ended in Twilio-side "no-answer" because neither
     # device had ever registered to receive one; a genuine Phase-5-into-Phase-4 dependency
-    # discovered only by testing a real call. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "8"
+    # discovered only by testing a real call. 8->9: real device retest still failed identically
+    # even after wiring the VoIP Services Certificate/Twilio Push Credential (build 8 -> backend
+    # config), with zero errors anywhere in Twilio's own logs -- meaning the failure is likely
+    # upstream of Twilio ever seeing an attempt. PushKitAdapter's own TwilioVoiceSDK.register
+    # result was being silently discarded (`try?`), a real blind spot; this build reports real
+    # requested/registered/failed status to profiles (migration 0007) so the next failure is
+    # diagnosable remotely instead of guessed again. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "9"
 
 packages:
   GotTimeCore:
