@@ -113,8 +113,16 @@ settings:
     # choke point answer()/decline() both call before doing anything else) to report whether the
     # invite is actually found, settling a UUID-mismatch theory (Twilio's own CallInvite.uuid vs
     # this app's call_uuid) that was floated and provisionally set aside for lack of direct
-    # evidence. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "16"
+    # evidence. See DECISIONS.md. 16->17: confirmed with real evidence, not a guess --
+    # last_call_event_status showed "invite_not_pending" with two genuinely different UUIDs.
+    # callInvite.uuid (Twilio's own SDK-local id on this device) has no relationship to
+    # call_sessions.call_uuid (chosen only by the caller's own device) -- so answer()/decline()
+    # always threw before ever reaching Twilio on the recipient's side, and activeCall never got
+    # set, so cancel/end also silently did nothing. Fixed by overriding the incoming session's
+    # callUUID with callInvite.uuid at the point PushKitAdapter receives it -- callUUID is a
+    # purely local SDK-matching field, never sent to the server or shown in any UI. See
+    # DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "17"
 
 packages:
   GotTimeCore:
