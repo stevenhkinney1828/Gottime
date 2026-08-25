@@ -13,19 +13,26 @@ struct DurationPickerView: View {
     @Environment(\.appEnvironment) private var environment
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedMinutes: Int?
+    @State private var selectedSeconds: Int?
     @State private var customText: String = ""
     @State private var isCustomSelected = false
     @State private var validationMessage: String?
 
-    private var resolvedMinutes: Int? {
+    /// `presetSeconds` (15s/30s/1min/3min) and `presetMinutes` (5/10/15/20/30 min) combined into
+    /// one ordered, seconds-denominated list — the picker renders a single grid of chips rather
+    /// than two separate rows, so both sets need to live in the same unit to sort together.
+    private var allPresetsInSeconds: [Int] {
+        (DurationPolicy.presetSeconds + DurationPolicy.presetMinutes.map { $0 * 60 }).sorted()
+    }
+
+    private var resolvedSeconds: Int? {
         if isCustomSelected {
             switch DurationPolicy.parseCustomMinutes(customText) {
-            case .success(let seconds): return seconds / 60
+            case .success(let seconds): return seconds
             case .failure: return nil
             }
         }
-        return selectedMinutes
+        return selectedSeconds
     }
 
     var body: some View {
@@ -54,7 +61,7 @@ struct DurationPickerView: View {
 
             PrimaryButton(
                 title: confirmTitle,
-                isDisabled: resolvedMinutes == nil
+                isDisabled: resolvedSeconds == nil
             ) {
                 confirmCall()
             }
@@ -70,29 +77,41 @@ struct DurationPickerView: View {
     }
 
     private var confirmTitle: String {
-        guard let minutes = resolvedMinutes else { return "Call" }
+        guard let seconds = resolvedSeconds else { return "Call" }
         let name = person.profile.firstName ?? "them"
-        return "Call \(name) for \(minutes) minute\(minutes == 1 ? "" : "s")"
+        return "Call \(name) for \(durationLabel(seconds))"
     }
 
     private var presetGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 80))], spacing: 12) {
-            ForEach(DurationPolicy.presetMinutes, id: \.self) { minutes in
+            ForEach(allPresetsInSeconds, id: \.self) { seconds in
                 DurationChip(
-                    label: "\(minutes) min",
-                    isSelected: !isCustomSelected && selectedMinutes == minutes
+                    label: chipLabel(seconds),
+                    isSelected: !isCustomSelected && selectedSeconds == seconds
                 ) {
                     isCustomSelected = false
-                    selectedMinutes = minutes
+                    selectedSeconds = seconds
                     validationMessage = nil
                 }
             }
             DurationChip(label: "Custom", isSelected: isCustomSelected) {
                 isCustomSelected = true
-                selectedMinutes = nil
+                selectedSeconds = nil
             }
         }
         .padding(.horizontal, 24)
+    }
+
+    private func chipLabel(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds) sec" : "\(seconds / 60) min"
+    }
+
+    private func durationLabel(_ seconds: Int) -> String {
+        if seconds < 60 {
+            return "\(seconds) second\(seconds == 1 ? "" : "s")"
+        }
+        let minutes = seconds / 60
+        return "\(minutes) minute\(minutes == 1 ? "" : "s")"
     }
 
     @ViewBuilder
@@ -145,8 +164,8 @@ struct DurationPickerView: View {
     /// (`PeopleListView`) is what actually starts it, from the sheet's `onDismiss` callback,
     /// which SwiftUI guarantees fires only once the dismissal has genuinely completed.
     private func confirmCall() {
-        guard let minutes = resolvedMinutes else { return }
-        onConfirm(DurationPolicy.seconds(forMinutes: minutes))
+        guard let seconds = resolvedSeconds else { return }
+        onConfirm(seconds)
         dismiss()
     }
 }

@@ -90,11 +90,13 @@ Deno.test("rejects a caller trying to call themselves", async () => {
   assertEquals(result.status, 400);
 });
 
-Deno.test("duration boundary matrix matches spec section 19 exactly", async () => {
+Deno.test("duration boundary matrix matches the 15s-3600s bound exactly", async () => {
   const client = new FakeRequestCallClient();
   client.connect(ALICE, BOB);
 
-  const accepted = [60, 3600, 300]; // 1 min, 60 min, and an arbitrary in-between value
+  // 15s (the floor, lowered from 60s for the owner's short presets), 60s (1 min), 3600s (60
+  // min, the ceiling), and an arbitrary in-between value.
+  const accepted = [15, 60, 3600, 300];
   for (const seconds of accepted) {
     const result = await requestCall(client, {
       callerId: ALICE,
@@ -104,7 +106,7 @@ Deno.test("duration boundary matrix matches spec section 19 exactly", async () =
     if (!result.ok) throw new Error(`expected ${seconds}s to be accepted, got: ${result.error}`);
   }
 
-  const rejected: unknown[] = [0, -1, 59, 3601, 7200, 1.5, "600", null, undefined, NaN];
+  const rejected: unknown[] = [0, -1, 14, 3601, 7200, 1.5, "600", null, undefined, NaN];
   for (const value of rejected) {
     const result = await requestCall(client, {
       callerId: ALICE,

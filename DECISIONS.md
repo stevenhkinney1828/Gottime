@@ -1956,3 +1956,75 @@ side too, not just the caller's.
 Build 17. This is very likely the complete, final fix for two-way real-device calling — every
 prior build this session was a genuine, necessary step toward being able to observe and fix
 this exact bug, not wasted effort. Not yet confirmed on a real device.
+
+## Build 17 confirmed: full two-way signaling finally works. Three new, real gaps found and fixed.
+
+Real retest: calls now connect and hang up correctly from *either* side, in both directions —
+the core mechanism this entire session has been chasing since Phase 4 began. The owner reported
+three remaining issues, investigated and fixed one at a time rather than guessed at together.
+
+**1. No audio in either direction.** Grepped the whole iOS app for any `AVAudioSession`/
+microphone-permission handling beyond `TwilioVoiceSDK.audioDevice = DefaultAudioDevice()` (set
+once in `TwilioVoiceAdapter.init`) and the speaker-routing override in `setSpeakerEnabled` —
+nothing anywhere ever explicitly requested microphone access.
+`INFOPLIST_KEY_NSMicrophoneUsageDescription` (added earlier this session) only supplies the
+system prompt's *text*; it doesn't trigger the prompt itself. Without an explicit, resolved
+grant before a call starts, `AVAudioSession`'s `.playAndRecord` activation (which
+`DefaultAudioDevice` performs internally, with no CallKit integration to do it a different way)
+can silently fail to produce a working audio route in *either* direction — consistent with the
+owner's report that neither side could hear anything, not just "he can't hear me." Fixed by
+calling `AVAudioApplication.requestRecordPermission` (the iOS 17+ API, matching this project's
+deployment target) once, early, alongside the existing push-registration trigger in
+`ContentView` — well before any call could plausibly happen, so the system prompt is already
+resolved by the time one does.
+
+**2. The two participants' countdown timers visibly desync**, worse the longer the recipient
+takes to answer. Root cause: each device stamps `connectedAt` from its *own* local clock at the
+exact moment its *own* `callDidConnect` fires — and the recipient's device reaches that moment
+later than the caller's, by however long push delivery, invite parsing, database lookups, human
+reaction time, and SDK negotiation take on their end (all real, unavoidable latency on the
+receiving side). This isn't a bug in the sense of "wrong code" so much as an architectural gap:
+the original design (see the very first `twilio-status-callback` entry in this file) always
+intended `connected_at` to be a single, server-recorded, authoritative timestamp both devices
+agree on — "not just trusted from the client's own clock" — specifically to prevent this.
+
+**3. Investigating (2) surfaced why that server-side design had never actually been working**:
+Twilio's real event name for a `<Client>` leg being answered is **`"in-progress"`**, not
+`"answered"` — confirmed directly from Twilio's own call Events API on this exact successful,
+hung-up call (`ringing` → `in-progress` → `completed`, POSTed verbatim to this project's
+`twilio-status-callback` webhook, which responded 204 both times). `planStatusTransition`'s
+`switch` had a case for `"answered"` that could simply never match anything Twilio actually
+sends — a silent no-op indistinguishable from the *deliberate* `initiated`/`completed` no-ops
+right next to it, which is exactly why it went unnoticed this long: `call_sessions.connected_at`
+had been `null` for literally every call this entire project, even ones that genuinely
+connected and were hung up normally, and nothing about that was visibly wrong until this
+specific investigation went looking for it. Fixed the event name
+(`ClientCallStatus`/`planStatusTransition` and their test), which — as a side effect — is also
+what makes fix (2) below possible at all.
+
+**Fix for (2), now that (3) makes it real**: `TwilioVoiceAdapter.applyAndEmit`, once a
+`.connected` transition succeeds, kicks off `reconcileConnectedAt` — a short-lived, retrying
+fetch (5 attempts, 400ms apart, since this is racing an independent webhook delivery with no way
+to await it directly) of the real `call_sessions.connected_at` from the server, then corrects
+the locally-tracked session and re-emits `.statusChanged` with the authoritative timestamp. Both
+devices end up computing their countdown from the same server-recorded instant. Best-effort by
+design: if the webhook is slow or never lands, the original locally-stamped time stands rather
+than leaving the countdown stuck — a reasonably-close approximation, not a broken state.
+
+**Also folded in the owner's own feature request** (asked mid-investigation, unrelated to the
+bugs above): four new duration presets — 15s, 30s, 1 min, 3 min — alongside the existing 5/10/
+15/20/30-minute set and Custom. 15s/30s fall below the original 60-second (1-minute) floor
+entirely, so `request-call`'s `MIN_DURATION_SECONDS` and the `call_sessions` CHECK constraint
+(`0011_lower_duration_minimum.sql`) were both lowered to 15 seconds — the three-layer
+duration-enforcement design (client/server/DB) stays in agreement, just at a new floor.
+Deliberately minimal, additive changes: `DurationPolicy.presetMinutes` (5/10/15/20/30) is
+untouched, with its own test still passing unmodified; a new `presetSeconds` array (15/30/60/
+180) sits alongside it, and `DurationPickerView` merges both into one seconds-denominated,
+sorted list for a single grid rather than maintaining two parallel UI paths. Custom text entry
+still asks for whole minutes (1-60), unchanged — the owner didn't ask to change that entry
+method, only to add fixed short presets.
+
+Build 18. All 44 backend tests pass (updated for the new duration floor and the `in-progress`
+event name). Not yet confirmed on a real device — in particular, `reconcileConnectedAt`'s retry
+timing and the audio permission fix are both new enough to warrant a real test before treating
+either as settled.

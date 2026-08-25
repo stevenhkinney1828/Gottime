@@ -48,6 +48,10 @@ final class DurationPolicyTests: XCTestCase {
         XCTAssertEqual(DurationPolicy.presetMinutes, [5, 10, 15, 20, 30])
     }
 
+    func testPresetSecondsMatchesOwnerRequestedShortOptions() {
+        XCTAssertEqual(DurationPolicy.presetSeconds, [15, 30, 60, 180])
+    }
+
     // MARK: - Custom text parsing (malformed input)
 
     func testParsesCleanIntegerText() {

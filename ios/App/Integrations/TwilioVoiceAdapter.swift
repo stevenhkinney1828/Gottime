@@ -347,6 +347,52 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         if updated.status.isTerminal {
             continuation.yield(.callEnded(callUUID: callUUID))
         }
+        if status == .connected {
+            Task { [weak self] in await self?.reconcileConnectedAt(callUUID: callUUID) }
+        }
+    }
+
+    /// The `connectedAt` stamped above is read from this device's own clock at the exact
+    /// moment its own `callDidConnect` fired — close to, but not identical to, when the *other*
+    /// participant's device reaches the same local milestone, since push delivery, invite
+    /// parsing, database lookups, human reaction time, and SDK negotiation all happen on their
+    /// side first (see PushKitAdapter/DECISIONS.md). Reported by the owner as a real,
+    /// visible desync: the caller's countdown starts before the recipient's screen even shows
+    /// theirs. Twilio's own "in-progress" status callback records one single, server-side
+    /// `connected_at` (see twilio-status-callback/logic.ts — its "answered"/"in-progress"
+    /// naming bug meant this had never actually been set, for any call, before this same build)
+    /// that both devices can fetch and agree on. Retries briefly since this fetch is racing an
+    /// independent webhook delivery this device has no way to await directly; if it never
+    /// lands, the locally-stamped time stands rather than leaving the countdown stuck.
+    private func reconcileConnectedAt(callUUID: UUID) async {
+        struct Row: Decodable {
+            let connectedAt: Date?
+            enum CodingKeys: String, CodingKey { case connectedAt = "connected_at" }
+        }
+        guard let session = currentSession(matching: callUUID) else { return }
+        for _ in 0..<5 {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard
+                let row: Row = try? await client.from("call_sessions")
+                    .select("connected_at")
+                    .eq("id", value: session.id)
+                    .single()
+                    .execute()
+                    .value,
+                let serverConnectedAt = row.connectedAt
+            else { continue }
+
+            lock.lock()
+            guard var current = activeSession, current.callUUID == callUUID else {
+                lock.unlock()
+                return
+            }
+            current.connectedAt = serverConnectedAt
+            activeSession = current
+            lock.unlock()
+            continuation.yield(.statusChanged(session: current))
+            return
+        }
     }
 
     /// Diagnostic added after build 14's real retest: the caller's side genuinely worked for

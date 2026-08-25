@@ -29,12 +29,14 @@ export type RequestCallResult =
   | { ok: true; session: CallSessionRecord }
   | { ok: false; error: string; status: number };
 
-const MIN_DURATION_SECONDS = 60;
+const MIN_DURATION_SECONDS = 15;
 const MAX_DURATION_SECONDS = 3600;
 
-/** Matches GotTimeCore's DurationPolicy bounds exactly (1-60 whole minutes) — this is one of
- * three independent duration-enforcement layers described in DECISIONS.md; the others are
- * the client-side policy and the database CHECK constraint. */
+/** Matches GotTimeCore's DurationPolicy bounds exactly (15-3600 seconds -- lowered from the
+ * original 60s/1-minute floor so the owner's requested 15s/30s presets are actually acceptable
+ * server-side, not just selectable in the UI) — this is one of three independent
+ * duration-enforcement layers described in DECISIONS.md; the others are the client-side policy
+ * and the database CHECK constraint (0011_lower_duration_minimum.sql). */
 function isValidDurationSeconds(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) &&
     value >= MIN_DURATION_SECONDS && value <= MAX_DURATION_SECONDS;

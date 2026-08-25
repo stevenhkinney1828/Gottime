@@ -9,8 +9,8 @@ Deno.test("ringing transitions from outgoing only, stamping ringing_at", () => {
   });
 });
 
-Deno.test("answered transitions from outgoing or ringing, stamping connected_at", () => {
-  const transition = planStatusTransition("answered");
+Deno.test("in-progress transitions from outgoing or ringing, stamping connected_at", () => {
+  const transition = planStatusTransition("in-progress");
   assertEquals(transition?.newStatus, "connected");
   assertEquals(transition?.timestampField, "connected_at");
   assertEquals(transition?.requiredCurrentStatuses, ["outgoing", "ringing"]);

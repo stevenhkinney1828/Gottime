@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import GotTimeCore
 
@@ -14,6 +15,7 @@ struct ContentView: View {
     @State private var coordinator: CallCoordinator?
     @State private var authState: AuthState = .signedOut
     @State private var hasRequestedPushRegistration = false
+    @State private var hasRequestedMicrophonePermission = false
 
     var body: some View {
         ZStack {
@@ -42,9 +44,25 @@ struct ContentView: View {
                 // just to avoid firing again on every subsequent signed-in state emission (e.g.
                 // the one updateFirstName now correctly triggers after onboarding) — calling
                 // registerForVoIPPushes() more than once is harmless, just wasteful.
-                if case .signedIn(let profile) = state, profile.hasCompletedOnboarding, !hasRequestedPushRegistration {
-                    hasRequestedPushRegistration = true
-                    Task { try? await environment.pushService.registerForVoIPPushes() }
+                if case .signedIn(let profile) = state, profile.hasCompletedOnboarding {
+                    if !hasRequestedPushRegistration {
+                        hasRequestedPushRegistration = true
+                        Task { try? await environment.pushService.registerForVoIPPushes() }
+                    }
+                    // The very first real connected call had no audio in either direction on a
+                    // real device -- confirmed nothing anywhere in this codebase had ever
+                    // explicitly requested microphone access (NSMicrophoneUsageDescription in
+                    // Info.plist only supplies the prompt's text; it doesn't trigger the prompt
+                    // itself). Without an explicit, resolved grant before a call starts,
+                    // AVAudioSession's .playAndRecord activation (which TwilioVoiceSDK's
+                    // DefaultAudioDevice performs internally) can silently fail to produce a
+                    // working audio route in either direction. Requested here, once, well before
+                    // any call could plausibly happen, so the system prompt is already resolved
+                    // by the time one does. See DECISIONS.md.
+                    if !hasRequestedMicrophonePermission {
+                        hasRequestedMicrophonePermission = true
+                        AVAudioApplication.requestRecordPermission { _ in }
+                    }
                 }
             }
         }

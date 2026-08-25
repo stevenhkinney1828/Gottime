@@ -9,6 +9,15 @@ public enum DurationPolicy {
     public static let minimumMinutes = 1
     public static let maximumMinutes = 60
 
+    /// Short presets added directly in seconds, alongside (not replacing) `presetMinutes` above
+    /// -- 15s/30s fall below the original whole-minute floor entirely, added per the owner's
+    /// own request. Already-known-valid constants, same as `presetMinutes`' own entries — never
+    /// re-validated before use, matching how a minute preset was never re-validated either.
+    /// 60/180 (1 min/3 min) are included here too so the duration picker has one single ordered
+    /// list to render instead of merging two. The 15s floor is matched by request-call's own
+    /// `MIN_DURATION_SECONDS` and the `call_sessions` CHECK constraint (0011_lower_duration_minimum.sql).
+    public static let presetSeconds: [Int] = [15, 30, 60, 180]
+
     public enum ValidationError: Error, Equatable, Sendable {
         case tooShort(minutes: Int)
         case tooLong(minutes: Int)

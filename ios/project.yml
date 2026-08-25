@@ -121,8 +121,19 @@ settings:
     # set, so cancel/end also silently did nothing. Fixed by overriding the incoming session's
     # callUUID with callInvite.uuid at the point PushKitAdapter receives it -- callUUID is a
     # purely local SDK-matching field, never sent to the server or shown in any UI. See
-    # DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "17"
+    # DECISIONS.md. 17->18: build 17's real retest confirmed full two-way signaling (connect,
+    # hangup from either side) works for the first time -- and surfaced three real, separate
+    # gaps: (1) no audio in either direction -- confirmed nothing had ever requested microphone
+    # permission; (2) the two participants' countdown timers visibly desync based on how long
+    # the recipient takes to answer, because each device stamps connectedAt from its own local
+    # clock; (3) investigating (2) found Twilio's own status-callback event is actually named
+    # "in-progress", not "answered" as originally assumed, so connected_at had never once been
+    # set server-side for any call. Fixed all three: explicit mic permission request,
+    # server-authoritative connected_at reconciliation (now possible since the in-progress fix
+    # makes the server value real), and the naming fix itself. Also added the owner's requested
+    # 15s/30s/1min/3min duration presets (request-call's floor lowered from 60s to 15s to allow
+    # them). See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "18"
 
 packages:
   GotTimeCore:
