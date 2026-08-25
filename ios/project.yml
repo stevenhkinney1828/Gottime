@@ -89,7 +89,11 @@ settings:
     # reported anything, the same kind of blind spot the outgoing side had before migration 0007
     # -- this build closes it for the incoming side too (migration 0008), so the next real test
     # shows exactly which step succeeds or fails instead of another guess. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "12"
+    # 12->13: build 12's CI failed to even compile -- AnyHashable (dictionaryPayload's key type)
+    # isn't Comparable, so .keys.sorted() in the new incoming-push diagnostic didn't type-check.
+    # No device to catch this ahead of a push; fixed from CI's own real error text. See
+    # DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "13"
 
 packages:
   GotTimeCore:

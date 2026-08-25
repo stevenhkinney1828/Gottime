@@ -1722,3 +1722,23 @@ speculative one.
 **Owner is offline for the next several hours** — this build (12) is ready and pushed
 autonomously; the next real-device retest, and reading whatever `last_incoming_push_status`
 comes back, is queued for whenever testing resumes.
+
+## Build 12 never actually shipped: a real compile error, caught by CI, not by review
+
+Build 12's CI failed outright at "Build and test app + UI tests" — never reached signing, so
+nothing changed on TestFlight. Real error text, not guessed: `payload.dictionaryPayload.keys.sorted()`
+in the new `didReceiveIncomingPushWith` diagnostic doesn't type-check, because `PKPushPayload`'s
+`dictionaryPayload` is `[AnyHashable: Any]` and `AnyHashable` isn't `Comparable` — `.sorted()`
+(and the `.joined()` after it, cascading from the same root cause) has no valid overload for it.
+
+This is exactly the failure mode this project's whole CI-as-the-only-Mac approach exists to
+catch (see `ARCHITECTURE.md`/the top of `ios-ci.yml`) — there's no local Swift toolchain to
+compile-check anything before pushing, so an error like this is only ever findable by an actual
+build. Fixed by mapping each key to `String` before sorting
+(`payload.dictionaryPayload.keys.map { "\($0)" }.sorted().joined(...)`) — `AnyHashable`'s
+`CustomStringConvertible`-via-interpolation conversion sidesteps the `Comparable` requirement
+entirely, same pattern already used elsewhere in this codebase for turning loosely-typed
+values into inspectable strings.
+
+Build 13 is this fix, nothing else changed from build 12's intent — still carries the same
+incoming-push diagnostics, just now actually compiling.

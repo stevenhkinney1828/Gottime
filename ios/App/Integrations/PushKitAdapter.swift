@@ -174,7 +174,10 @@ extension PushKitAdapter: PKPushRegistryDelegate {
             completion()
             return
         }
-        let payloadKeys = payload.dictionaryPayload.keys.sorted().joined(separator: ",")
+        // dictionaryPayload is [AnyHashable: Any] -- AnyHashable isn't Comparable, so map to
+        // String before sorting (caught by a real CI compile failure, not spotted by review;
+        // there's no local Swift toolchain to catch this ahead of a push -- see DECISIONS.md).
+        let payloadKeys = payload.dictionaryPayload.keys.map { "\($0)" }.sorted().joined(separator: ",")
         Task { [weak self] in
             await self?.reportIncomingPushStatus(status: "push_received", detail: "keys=\(payloadKeys)")
         }
