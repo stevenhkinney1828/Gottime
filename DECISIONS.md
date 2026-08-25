@@ -1607,3 +1607,50 @@ Info.plist-synthesis problem was ultimately solved by leaving Info.plist out of 
 entirely for the values that mattered). If `"voip"` is genuinely present and correct, the
 search moves to the provisioning profile/capability side after all, this time with the
 Info.plist explanation ruled out by direct evidence rather than assumed innocent.
+
+## Confirmed root cause: `UIBackgroundModes=[]` on two real devices, not another guess
+
+Build 10's real result settled it: both the owner's and the brother's phones reported
+`push_registration_detail: "UIBackgroundModes=[]"` — genuinely empty, not just missing "voip."
+The `INFOPLIST_KEY_UIBackgroundModes: "voip audio"` build setting was present in `project.yml`
+the entire time (since build 8) and simply never synthesized into the compiled Info.plist at
+all, on real hardware, confirmed directly rather than inferred from CI or documentation.
+
+**This is a different failure mode from the earlier Supabase-config crash, not the same bug
+recurring.** That one was "custom, invented keys never synthesize" — the fix there was to
+abandon Info.plist entirely for those two values in favor of a plain compiled Swift file, since
+nothing about the OS itself needed to read `GTSupabaseProjectRef` from Info.plist; the app's own
+code was the only reader. `UIBackgroundModes` can't take that path — it's a real key the OS
+itself reads directly from the compiled Info.plist to decide whether to grant PushKit
+registration at all; there's no application-code workaround for an OS-level declarative
+capability. The actual, narrower explanation: Xcode's `INFOPLIST_KEY_*` build-setting synthesis
+only covers a specific, finite set of keys Xcode's own build system knows about (confirmed
+working in this exact project for `UISupportedInterfaceOrientations`, `CFBundleDisplayName`,
+`ITSAppUsesNonExemptEncryption`, `NSMicrophoneUsageDescription`, `CFBundleIconName`) —
+`UIBackgroundModes` (traditionally configured through Xcode's "Background Modes" capability
+checkboxes in the Signing & Capabilities UI, a different underlying mechanism from ordinary
+build-setting-driven keys) simply isn't one of them, on this toolchain, for this key.
+
+**Fix: a partial physical `Info.plist` (`ios/Config/Info.plist`, containing only
+`UIBackgroundModes`), merged with the existing `INFOPLIST_KEY_*` settings** via
+`INFOPLIST_FILE` on the `GotTime` target, rather than switching the *entire* project off
+`GENERATE_INFOPLIST_FILE: YES` (which would mean re-deriving every other already-working key by
+hand and risk breaking something that currently works). This relies on Xcode's own documented
+Info.plist consolidation behavior (introduced Xcode 13): when both `GENERATE_INFOPLIST_FILE:
+YES` and a target `INFOPLIST_FILE` pointing at a real (partial) plist are set, Xcode merges the
+physical file's contents with the `INFOPLIST_KEY_*`-synthesized keys rather than one replacing
+the other. Chosen deliberately over guessing a different `INFOPLIST_KEY_UIBackgroundModes`
+value/format a third time — this project's own established discipline (two earlier guessed
+fixes for the Supabase crash both failed identically) is to reach for a mechanism with real
+documentation behind it once a first guess is empirically disproven, not to keep guessing syntax
+variations blind.
+
+Removed the now-confirmed-nonfunctional `INFOPLIST_KEY_UIBackgroundModes` setting from
+`project.yml` entirely rather than leaving it in as harmless-but-dead — a stale setting that
+looks load-bearing but silently does nothing is exactly the kind of trap that made this bug take
+three real-device round-trips to find in the first place.
+
+**Not yet reverified**: build 10's diagnostic code (reading `UIBackgroundModes` back and
+reporting it) is still in place for build 11, so the very next real-device test will show
+directly, with the same evidence-based method, whether this fix actually worked — not assumed
+from the theory alone.

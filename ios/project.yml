@@ -50,12 +50,6 @@ settings:
     # real incoming calls, the same way the App Store icon/orientation gaps were caught before
     # they became a separate failed round-trip. See DECISIONS.md.
     INFOPLIST_KEY_NSMicrophoneUsageDescription: "GotTime? needs your microphone during a call so the other person can hear you."
-    # "voip" lets PushKit wake the app for an incoming call notification; "audio" keeps an
-    # already-connected call's audio session alive if the app is backgrounded mid-call. Space-
-    # separated string, matching the same array-value convention already confirmed working for
-    # INFOPLIST_KEY_UISupportedInterfaceOrientations above (verified present via the on-screen
-    # Info.plist dump earlier, not assumed).
-    INFOPLIST_KEY_UIBackgroundModes: "voip audio"
     MARKETING_VERSION: "0.1.0"
     # Bumped each time a real device test needs a fresh build. Apple rejects re-uploading the
     # same build number twice, and per Apple's own review-scoping rules, a later build of the
@@ -82,8 +76,12 @@ settings:
     # compiled Info.plist) was only ever confirmed for a different key, never this one -- this
     # build reads UIBackgroundModes back from the real compiled bundle and reports it alongside
     # "requested" so that assumption gets checked with real evidence instead of guessed a third
-    # time. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "10"
+    # time. See DECISIONS.md. 10->11: build 10's on-device evidence came back
+    # UIBackgroundModes=[] on two separate real phones -- confirmed root cause, not another
+    # guess. Fixed via a partial physical Info.plist (Config/Info.plist) merged with the existing
+    # INFOPLIST_KEY_* settings, Xcode's actual documented mechanism for array-valued keys that
+    # don't have real INFOPLIST_KEY_ synthesis support. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "11"
 
 packages:
   GotTimeCore:
@@ -144,6 +142,18 @@ targets:
         # upload, see DECISIONS.md.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleIconName: AppIcon
+        # UIBackgroundModes ("voip"/"audio") turned out NOT to be one of the INFOPLIST_KEY_*
+        # settings Xcode actually synthesizes -- confirmed directly (not assumed) via build 10's
+        # on-device diagnostic, which read Bundle.main.infoDictionary["UIBackgroundModes"] back
+        # from the real compiled app on two separate real devices and got back an empty array,
+        # even though the build setting was present. Unlike the earlier Supabase-config crash
+        # (fixed by moving those values OUT of Info.plist into a plain Swift file), the OS itself
+        # reads UIBackgroundModes directly from the compiled Info.plist -- there's no
+        # code-level workaround, so this uses Xcode's actual documented mechanism for exactly
+        # this situation instead: GENERATE_INFOPLIST_FILE: YES (still true, project-level) merges
+        # a partial physical Info.plist (INFOPLIST_FILE below) with the INFOPLIST_KEY_* settings,
+        # rather than either replacing the other. See DECISIONS.md.
+        INFOPLIST_FILE: Config/Info.plist
 
   GotTimeUITests:
     type: bundle.ui-testing
