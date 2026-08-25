@@ -109,6 +109,34 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
         )
         try? await client.from("profiles").update(update).eq("id", value: userId).execute()
     }
+
+    /// Same shape and same reasoning as `reportPushRegistrationStatus` above, for the other
+    /// half of the pipeline that had zero visibility until now: whether an incoming push is
+    /// actually received and handled at all. Added once outgoing registration started
+    /// succeeding but the recipient's phone still never showed an incoming call -- Twilio's own
+    /// call events proved a real ~10s ring was attempted (SIP 487, consistent with the caller
+    /// canceling), so the open question shifted from "did registration work" to "what happens
+    /// to the push once it arrives" — see DECISIONS.md and migration 0008.
+    private func reportIncomingPushStatus(status: String, detail: String?) async {
+        struct Update: Encodable {
+            let lastIncomingPushStatus: String
+            let lastIncomingPushDetail: String?
+            let lastIncomingPushUpdatedAt: String
+
+            enum CodingKeys: String, CodingKey {
+                case lastIncomingPushStatus = "last_incoming_push_status"
+                case lastIncomingPushDetail = "last_incoming_push_detail"
+                case lastIncomingPushUpdatedAt = "last_incoming_push_updated_at"
+            }
+        }
+        guard let userId = client.auth.currentSession?.user.id else { return }
+        let update = Update(
+            lastIncomingPushStatus: status,
+            lastIncomingPushDetail: detail.map { String($0.prefix(500)) },
+            lastIncomingPushUpdatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        try? await client.from("profiles").update(update).eq("id", value: userId).execute()
+    }
 }
 
 // MARK: - PKPushRegistryDelegate
@@ -146,6 +174,10 @@ extension PushKitAdapter: PKPushRegistryDelegate {
             completion()
             return
         }
+        let payloadKeys = payload.dictionaryPayload.keys.sorted().joined(separator: ",")
+        Task { [weak self] in
+            await self?.reportIncomingPushStatus(status: "push_received", detail: "keys=\(payloadKeys)")
+        }
         TwilioVoiceSDK.handleNotification(payload.dictionaryPayload, delegate: self, delegateQueue: nil)
         completion()
     }
@@ -165,14 +197,28 @@ extension PushKitAdapter: NotificationDelegate {
             let callerId = UUID(uuidString: callerIdString),
             let callSessionIdString = callInvite.customParameters?["callSessionId"],
             let callSessionId = UUID(uuidString: callSessionIdString)
-        else { return }
+        else {
+            let detail = "from=\(callInvite.from ?? "nil") params=\(callInvite.customParameters ?? [:])"
+            Task { [weak self] in
+                await self?.reportIncomingPushStatus(status: "invite_unparseable", detail: detail)
+            }
+            return
+        }
 
         Task { [weak self] in
             guard let self else { return }
-            guard let context = try? await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId) else {
-                return
+            await self.reportIncomingPushStatus(
+                status: "invite_parsed",
+                detail: "callerId=\(callerId) callSessionId=\(callSessionId)"
+            )
+            do {
+                let context = try await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId)
+                await self.reportIncomingPushStatus(status: "context_fetched", detail: nil)
+                self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
+                await self.reportIncomingPushStatus(status: "delivered_to_coordinator", detail: nil)
+            } catch {
+                await self.reportIncomingPushStatus(status: "context_fetch_failed", detail: "\(error)")
             }
-            self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
         }
     }
 

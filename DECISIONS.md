@@ -1654,3 +1654,71 @@ three real-device round-trips to find in the first place.
 reporting it) is still in place for build 11, so the very next real-device test will show
 directly, with the same evidence-based method, whether this fix actually worked — not assumed
 from the theory alone.
+
+## Build 11's real retest: genuine progress, registration confirmed working, one more gap found
+
+The owner retested build 11 for real, twice, with the app already open for a while (ruling out
+the earlier registration-timing race). Both attempts still ended in "Call failed." Checked the
+real evidence rather than assuming the fix failed outright:
+
+**`profiles` confirmed the UIBackgroundModes fix genuinely worked**: both the owner's and the
+brother's accounts show `push_registration_status: "registered"` with
+`push_registration_detail: "UIBackgroundModes=[\"voip\", \"audio\"]"` — the array is no longer
+empty, `TwilioVoiceSDK.register()` completed with no error, on real hardware. The build 10/11
+fix is confirmed, not just theorized.
+
+**Twilio's own call Events (`GET .../Calls/{sid}/Events.json`) showed something genuinely new**:
+for both attempts where the recipient was already registered before the call started, the
+outbound-dial leg reached `call_status: "ringing"` and stayed there for 10-11 real seconds before
+ending in `no-answer` with `sip_response_code: "487"` (SIP "Request Terminated" — the standard
+response to an explicit CANCEL, consistent with the owner's own description of watching it sit
+on the calling screen and hitting Cancel himself). This is categorically different from every
+attempt before build 10: every single prior attempt's outbound-dial leg showed instant,
+`duration: 0` `no-answer` with no `"ringing"` event at all. The one remaining attempt in this
+same test round that recipient (the owner, not yet finished registering until 2 minutes later)
+never reached `"ringing"` either — cleanly consistent with the already-established
+registration-timing explanation for that specific attempt, not a new mystery.
+
+**Correctly resisted reading "ringing for 10s + SIP 487" as full confirmation the push was
+delivered** — `"ringing"` is Twilio's own call-progress status for the Dial attempt itself and
+doesn't, on its own, prove a VoIP push actually reached the device; a SIP 487 is exactly what an
+impatient caller hitting Cancel after ~10 seconds produces regardless of whether the recipient's
+phone ever showed anything. What's genuinely new and worth acting on is that Twilio is now
+*attempting* delivery for a real, non-trivial window, where before it gave up instantly — meaning
+the registration/certificate/credential chain is very likely no longer the blocker. What still
+isn't known: whether the recipient's device ever received the push at all, and if it did,
+which specific step of receiving/parsing/handling it broke down.
+
+**Added the same kind of diagnostics to the incoming side that solved the outgoing side**,
+rather than guess a fourth time: `PushKitAdapter`'s entire incoming-push path
+(`didReceiveIncomingPushWith` → `callInviteReceived`'s parsing guard → `fetchIncomingCallContext`
+→ `voiceAdapter.handleIncomingCallInvite`) had never reported anything, on either success or
+failure — an identical blind spot to the one `try?` on `TwilioVoiceSDK.register` created for the
+outgoing side (see the earlier "added real remote diagnostics" entry). Added
+`last_incoming_push_status`/`detail`/`updated_at` to `profiles` (migration
+`0008_incoming_push_diagnostics.sql`, applied the same way as 0007, via the Management API's
+`database/query` endpoint) with five states: `push_received` (PushKit's delegate fired at all —
+if this never appears, the push either never arrived or PushKit's delegate wasn't live to catch
+it), `invite_unparseable`/`invite_parsed` (the identity/session-id parsing guard, with the raw
+`From`/custom parameters recorded on failure so a real malformed-invite bug would be
+diagnosable too, not just assumed), `context_fetched`/`context_fetch_failed` (the
+profile+session lookup, with the real error on failure), and `delivered_to_coordinator`
+(`TwilioVoiceAdapter` was actually told about the invite, meaning the UI *should* have had
+everything it needed to show `IncomingCallView`).
+
+**Deliberately did not yet restructure `PKPushRegistry` setup to happen at true app-launch time**
+(e.g. via a `UIApplicationDelegateAdaptor`, which is Apple's documented best practice for VoIP
+apps specifically so a *terminated* app can still be woken by an incoming push) — this project
+currently creates the registry lazily inside `ContentView`'s `.task`, tied to a signed-in,
+onboarded auth state. Both failed retests happened with the app already open in the foreground
+the whole time, so a terminated-app-launch timing gap is very unlikely to be what broke *this*
+specific test, and restructuring app-launch lifecycle is a meaningfully bigger, riskier change
+to make without a real device available to verify it on. Reconsider this directly if the next
+test's diagnostics show `push_received` never firing at all despite the app being open — that
+specific result would point at the registry/delegate wiring itself rather than app-launch timing,
+and is the point where this restructuring would become the evidence-supported next step, not a
+speculative one.
+
+**Owner is offline for the next several hours** — this build (12) is ready and pushed
+autonomously; the next real-device retest, and reading whatever `last_incoming_push_status`
+comes back, is queued for whenever testing resumes.

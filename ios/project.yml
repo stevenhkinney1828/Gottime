@@ -80,8 +80,16 @@ settings:
     # UIBackgroundModes=[] on two separate real phones -- confirmed root cause, not another
     # guess. Fixed via a partial physical Info.plist (Config/Info.plist) merged with the existing
     # INFOPLIST_KEY_* settings, Xcode's actual documented mechanism for array-valued keys that
-    # don't have real INFOPLIST_KEY_ synthesis support. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "11"
+    # don't have real INFOPLIST_KEY_ synthesis support. See DECISIONS.md. 11->12: build 11's real
+    # retest was genuine progress -- both phones registered successfully, and Twilio's own call
+    # events show a real ~10s "ringing" phase (SIP 487 at the end, consistent with the caller
+    # canceling) instead of the instant 0-duration no-answer every earlier attempt showed. But
+    # the recipient's phone still never surfaced an incoming call. The entire incoming-push
+    # handling path (PushKitAdapter's didReceiveIncomingPushWith/callInviteReceived) has never
+    # reported anything, the same kind of blind spot the outgoing side had before migration 0007
+    # -- this build closes it for the incoming side too (migration 0008), so the next real test
+    # shows exactly which step succeeds or fails instead of another guess. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "12"
 
 packages:
   GotTimeCore:
