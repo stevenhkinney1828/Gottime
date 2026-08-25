@@ -75,8 +75,15 @@ settings:
     # upstream of Twilio ever seeing an attempt. PushKitAdapter's own TwilioVoiceSDK.register
     # result was being silently discarded (`try?`), a real blind spot; this build reports real
     # requested/registered/failed status to profiles (migration 0007) so the next failure is
-    # diagnosable remotely instead of guessed again. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "9"
+    # diagnosable remotely instead of guessed again. See DECISIONS.md. 9->10: build 9's real
+    # retest came back "requested" on both phones and never advanced -- PushKit itself never
+    # handed out a token. The one load-bearing assumption behind that requirement
+    # (INFOPLIST_KEY_UIBackgroundModes's space-separated-array value actually landing in the
+    # compiled Info.plist) was only ever confirmed for a different key, never this one -- this
+    # build reads UIBackgroundModes back from the real compiled bundle and reports it alongside
+    # "requested" so that assumption gets checked with real evidence instead of guessed a third
+    # time. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "10"
 
 packages:
   GotTimeCore:

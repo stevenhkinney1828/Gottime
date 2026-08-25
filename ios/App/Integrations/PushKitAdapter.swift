@@ -44,7 +44,17 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
         // handed out a token at all (an entitlements/provisioning problem), as distinct from a
         // token arriving but TwilioVoiceSDK.register failing (a credential/backend problem).
         // See DECISIONS.md and migration 0007.
-        await reportPushRegistrationStatus(status: "requested", detail: nil)
+        //
+        // First real retest came back with exactly that "requested, then nothing" result on
+        // both phones. PushKit requires the "voip" UIBackgroundModes entry to ever call back at
+        // all -- but this project only ever *confirmed* the INFOPLIST_KEY_UIBackgroundModes
+        // space-separated-array pattern works via a different key (UISupportedInterfaceOrientations);
+        // it was never independently checked for this one. Reading it back directly from the
+        // actual compiled bundle here, the same "settle it with on-screen/remote evidence, don't
+        // assume precedent transfers" approach that found the real Info.plist bug earlier in
+        // this project (see DECISIONS.md).
+        let backgroundModes = Bundle.main.infoDictionary?["UIBackgroundModes"] as? [String] ?? []
+        await reportPushRegistrationStatus(status: "requested", detail: "UIBackgroundModes=\(backgroundModes)")
     }
 
     public func currentDeviceToken() async -> String? {

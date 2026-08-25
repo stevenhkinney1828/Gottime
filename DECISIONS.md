@@ -1557,3 +1557,53 @@ it exists to observe.
 **Genuinely not yet known**: which of the three states either phone will land in. That's the
 next thing to check, directly via the real `profiles` table, once build 9 is on both phones and
 a fresh call is attempted — not assumed here.
+
+## Build 9's real result: stuck at "requested" on both phones — narrowed to PushKit itself, not Twilio
+
+Retested for real. Both accounts (`Sk` and `gabrielle`) show `push_registration_status:
+"requested"`, `push_registration_updated_at` timestamped right around the retest, and no
+`"registered"`/`"failed"` follow-up from either. This is itself the answer, not an ambiguous
+result: `registerForVoIPPushes()` ran fully (the code path only reaches the `"requested"` write
+after `registry.desiredPushTypes = [.voIP]` is set), but iOS's `PKPushRegistry` never called
+`pushRegistry(_:didUpdate:for:)` back with a token on either real device — the failure is
+upstream of `TwilioVoiceSDK.register` entirely, confirming the certificate/credential work
+earlier was never the problem. (The timestamps also independently confirm both phones were
+actually running build 9, not a stale build 8 — build 8 had no diagnostic-writing code at all,
+so any row change had to come from build 9.)
+
+**Checked what I could check myself before guessing a fix**: no local App Store Connect API
+credentials exist outside GitHub Actions' own secrets (by design — see the earlier entry on
+why only the four Twilio values, not everything, live in `.env`), so I can't independently
+query whether the App ID's Push Notifications capability is really saved. Reasoned about it
+indirectly instead: Apple's own certificate-creation flow (used to get `voip_services.cer`)
+would have refused to create a VoIP Services Certificate for an App ID without that capability
+already enabled — so its presence is already about as verified as it can be without direct API
+access. Both build 8 and build 9's Archive steps also succeeded outright with the
+`aps-environment` entitlement requested via `-allowProvisioningUpdates` automatic signing —
+if the provisioning profile couldn't satisfy that entitlement, Xcode fails the archive with an
+explicit error (this project has hit and diagnosed exactly that class of error before, for a
+different capability, during the original sign-and-upload work). A silent, successful archive
+on both builds is real (if indirect) evidence the profile/capability side is fine.
+
+**The one remaining load-bearing assumption that was never independently verified**: whether
+`INFOPLIST_KEY_UIBackgroundModes: "voip audio"` (a space-separated string, for this project's
+one array-typed `INFOPLIST_KEY_*` setting other than orientations) actually lands as `["voip",
+"audio"]` in the *compiled* Info.plist. The only direct confirmation this project has ever done
+of that mechanism was for `UISupportedInterfaceOrientations`, via the on-screen dump during the
+original launch-crash investigation — this key was set by analogy to that one working, never
+checked itself. PushKit's `didUpdate` callback firing at all is documented to require the VoIP
+background mode being genuinely present, so if the analogy doesn't hold for this key the way it
+did for orientations, this exact "requested, then silence" symptom is exactly what you'd expect
+— on both phones, identically, matching what was actually observed.
+
+**Chose to verify this directly rather than guess a fix**, same discipline as every other real
+finding this session: build 10 reads `Bundle.main.infoDictionary?["UIBackgroundModes"]` back
+from the actual running app and writes it into `push_registration_detail` alongside the
+existing `"requested"` status, so the next check of the real `profiles` table settles this with
+direct evidence instead of another assumption. If it comes back empty or missing `"voip"`,
+that's the confirmed root cause and the fix is straightforward (a different value format, or a
+plain compiled Swift/native `.entitlements`-adjacent approach, matching how the earlier
+Info.plist-synthesis problem was ultimately solved by leaving Info.plist out of the picture
+entirely for the values that mattered). If `"voip"` is genuinely present and correct, the
+search moves to the provisioning profile/capability side after all, this time with the
+Info.plist explanation ruled out by direct evidence rather than assumed innocent.
