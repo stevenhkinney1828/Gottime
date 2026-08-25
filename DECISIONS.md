@@ -1430,3 +1430,71 @@ invite (caller gives up before the recipient answers) clears `TwilioVoiceAdapter
 in-app incoming-call banner could keep showing after the caller has actually hung up. Spec
 section 16 edge-case territory, not a blocker for proving the core mechanism works; worth a
 proper look once real two-way audio is confirmed.
+
+## VoIP Services Certificate + Twilio Push Credential: the piece PushKitAdapter needed to actually receive anything
+
+Build 8 (PushKitAdapter, previous entry) shipped `TwilioVoiceSDK.register()` but that call is
+only half the mechanism — Twilio also needs an Apple-issued certificate on file so it can
+actually deliver the VoIP push once a device registers. Confirmed the CI job that produced
+build 8 completed successfully (both Simulator and Sign & upload jobs green) before doing
+anything else with this.
+
+**Owner gate cleared: VoIP Services Certificate, not the originally-planned APNs .p8 key** —
+consistent with the earlier architecture decision (Twilio delivers pushes directly, no custom
+`register-device` backend path). Generated the CSR and private key locally via `openssl req`
+(no Mac/Keychain Access needed — see the earlier CSR-generation entry), sent only the CSR to
+the owner, kept the private key local. Owner enabled the Push Notifications capability on the
+`com.stevenkinney.gottime` App ID, created a VoIP Services Certificate from the CSR in the
+Apple Developer Portal, and sent back the resulting `voip_services.cer`.
+
+**Verified, not assumed, before using it for anything:**
+- Converted DER→PEM via `openssl x509 -inform DER ... -outform PEM` and read the subject back:
+  `UID=com.stevenkinney.gottime.voip, CN=VoIP Services: com.stevenkinney.gottime,
+  OU=TDMZW5R7BC, O=Steven Kinney, C=US` — confirms it's issued for the right app and the
+  right Apple Developer team, not just "a certificate that opened without erroring."
+- Confirmed the certificate and the locally-held private key are actually a matched pair via
+  `openssl x509 -noout -modulus | openssl md5` vs. `openssl rsa -noout -modulus | openssl md5`
+  on each — identical hashes. Skipping this check would have meant not finding out the two
+  didn't match until a real push silently failed to decrypt on Apple's side, a much harder
+  failure to diagnose than a `#!/bin/sh` string comparison.
+
+**Created the Twilio "Push Credential" via Twilio's REST API directly** (same "owner doesn't
+need to touch Twilio's console for API-reachable setup" pattern as
+`backend/scripts/twilio-setup.ts`), using the existing `.env` `TWILIO_ACCOUNT_SID`/
+`TWILIO_AUTH_TOKEN`. **First attempt used the wrong API surface** —
+`https://api.twilio.com/2010-04-01/Accounts/{sid}/Credentials/Push/APN.json` (by analogy with
+the core Calls/Messages REST resources already used elsewhere in this project) returned a
+genuine 404, not a permissions or formatting error. Push Credentials are actually a Notify API
+resource: `POST https://notify.twilio.com/v1/Credentials` (`Type=apn`, `Certificate`,
+`PrivateKey`, `Sandbox=false`) — corrected immediately once the 404 proved the first guess
+wrong, rather than retrying the same URL. Returned `sid: CR2f6cc884e93f0d76452233b2ba386853`,
+`sandbox: false` — `Sandbox=false` deliberately, matching `aps-environment: production`
+already set in `project.yml`'s entitlements (a sandbox credential would silently fail against a
+production-signed TestFlight build).
+
+**Wired the credential into the token-minting path**, not left as an orphaned Twilio-side
+resource: Twilio's Voice Access Token format supports an optional `push_credential_sid` field
+inside the `voice` grant specifically so `TwilioVoiceSDK.register()` knows which certificate to
+push through — without it, Twilio has no way to resolve "this device token" to "this app's
+APNs identity" even though a Push Credential exists on the account. Added `pushCredentialSid`
+as an optional field to `buildVoiceAccessToken`'s params (optional, not required, so existing
+tests needed zero changes — confirmed all 44 `deno test` cases still pass unmodified) and
+`index.ts` now reads `TWILIO_PUSH_CREDENTIAL_SID` and passes it through. Deliberately *not*
+folded into the existing four-variable `503`-if-missing check: a token minted without it still
+works fine for outgoing calls, it just can't receive a push — a real incoming-call bug, not a
+"voice calling isn't configured at all" state, so it shouldn't 503 the whole endpoint.
+
+Set `TWILIO_PUSH_CREDENTIAL_SID` as a Supabase Edge Function secret (`npx supabase secrets
+set`, one named variable, same pattern as the original four Twilio secrets — not the whole
+`.env` file) and deployed `issue-voice-token` (`npx supabase functions deploy
+issue-voice-token`). Also recorded the SID in `.env` itself, replacing the stale
+`APNS_AUTH_KEY_P8`/`APNS_KEY_ID`/`APNS_TEAM_ID` placeholders left over from the
+original (superseded) direct-APNs architecture plan — those three were never going to be filled
+in under the Twilio-push-credential design, so keeping them around as empty placeholders was
+misleading rather than aspirational.
+
+**Not yet verified**: whether an actual incoming call now reaches a locked/foreground real
+device end to end. This entry documents the pipeline being *correctly assembled and deployed*,
+confirmed via each step's own direct evidence (matched modulus, successful 201 from Twilio,
+passing tests, successful deploy) — not a claim that a real call has been tested yet. That's
+the next real-device round-trip, not a foregone conclusion.

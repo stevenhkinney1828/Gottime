@@ -16,6 +16,11 @@ export interface VoiceTokenParams {
   /** Twilio allows up to 24h (86400s); defaults to 1h, matching Twilio's own "shortest
    * feasible" best-practice guidance. */
   ttlSeconds?: number;
+  /** SID of the Twilio Push Credential (APNs cert) to use when this token is later passed to
+   * TwilioVoiceSDK.register(accessToken:deviceToken:) — without it Twilio has no way to know
+   * which certificate to push through. Optional so tests/dev can omit it; index.ts always
+   * supplies it once TWILIO_PUSH_CREDENTIAL_SID is configured. See DECISIONS.md. */
+  pushCredentialSid?: string;
   now?: () => Date;
 }
 
@@ -49,6 +54,7 @@ export async function buildVoiceAccessToken(params: VoiceTokenParams): Promise<V
       voice: {
         outgoing: { application_sid: params.twimlAppSid },
         incoming: { allow: true },
+        ...(params.pushCredentialSid ? { push_credential_sid: params.pushCredentialSid } : {}),
       },
     },
   };

@@ -28,6 +28,10 @@ export async function handler(req: Request): Promise<Response> {
   const apiKeySid = Deno.env.get("TWILIO_API_KEY_SID");
   const apiKeySecret = Deno.env.get("TWILIO_API_KEY_SECRET");
   const twimlAppSid = Deno.env.get("TWILIO_TWIML_APP_SID");
+  // Not required alongside the other four: without it, tokens still mint fine for outgoing
+  // calls, they just can't receive a push (register() has nothing to bind to). Missing this
+  // is a real incoming-call bug, not a 503-worthy misconfiguration -- see DECISIONS.md.
+  const pushCredentialSid = Deno.env.get("TWILIO_PUSH_CREDENTIAL_SID") ?? undefined;
   if (!accountSid || !apiKeySid || !apiKeySecret || !twimlAppSid) {
     log("twilio", "issue-voice-token: Twilio is not configured yet");
     return jsonResponse({ error: "voice calling is not configured yet" }, { status: 503 });
@@ -38,6 +42,7 @@ export async function handler(req: Request): Promise<Response> {
     apiKeySid,
     apiKeySecret,
     twimlAppSid,
+    pushCredentialSid,
     identity: userData.user.id,
   });
 

@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-25
+Last updated: 2026-08-24
 
-**Current phase: Phase 4 — Voice proof (real device testing underway; sign-in, onboarding, and connections all confirmed working after real bugs found and fixed; a slice of Phase 5 — PushKit call registration — pulled forward after discovering real calls structurally can't work without it — see bottom)**
+**Current phase: Phase 4 — Voice proof (real device testing underway; sign-in, onboarding, and connections all confirmed working after real bugs found and fixed; a slice of Phase 5 — PushKit call registration — pulled forward after discovering real calls structurally can't work without it; the VoIP push certificate/credential pipeline is now fully wired and deployed — a real incoming-call test is the next step — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -68,15 +68,15 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - 🔄 **Fourth issue, found via direct database investigation rather than another build round-trip: the connection actually succeeded the whole time, but the People screen never refreshed to show it.** Queried `connections`/`connection_invites` directly with service-role credentials and found a real, active connection already existed — the owner's retry (reasonably assuming the first attempt failed, since nothing on screen changed) hit a second, correctly-triggered "Already connected" rejection that looked like the same failure repeating. Root cause: `PeopleListView`'s `AddConnectionView` sheet had no `onDismiss` handler, unlike the adjacent sheet in the same file — the people list only ever loaded once on first appearance or on manual pull-to-refresh, never after actually adding a connection. Fixed by re-fetching on dismiss. Also fixed a related silent-failure gap in `AddConnectionView.createInvite()` (used `try?` with no error surfacing at all, unlike the already-fixed redeem path). A real methodology mistake happened and was caught mid-investigation, not glossed over: an empty `call_sessions` table was briefly read as proof a call attempt never reached the backend, before realizing the owner's own account deletion (to troubleshoot) had cascade-deleted that evidence — see DECISIONS.md for the full, honest account. **The original "Call failed" report remains genuinely unresolved** — next step is retrying the call fresh once this build confirms the connection displays correctly, with evidence gathered immediately if it fails again.
 - ✅ Build 7 confirmed working — both real connections (wife and brother) now display correctly. Owner retried the call in both directions; both failed identically.
 - 🔄 **Fifth issue, root-caused directly from Twilio's own call logs, not another guess: real calls could never work at all, because neither device had ever registered with Twilio to *receive* one.** `call_sessions` confirmed `request-call` succeeds every time (authorization and session creation both genuinely work); Twilio's own Calls API showed the caller's leg always succeeding and `<Dial><Client>` correctly targeting the right recipient, but ending in `"no-answer"` every time. Confirmed against Twilio's SDK docs: receiving any call requires `TwilioVoiceSDK.register(accessToken:deviceToken:)` with a real PushKit VoIP token first — a hard requirement never implemented anywhere in the codebase. **This reveals a genuine gap in the original phase boundary**: Phase 4's own "two-way audio" exit criterion turns out to structurally require a slice of Phase 5 (PushKit registration) that nothing before a real two-device test could have surfaced. Built `PushKitAdapter` (new) to register for VoIP push and route incoming calls to `TwilioVoiceAdapter`, using Twilio's own push delivery directly (verified sufficient from Twilio's official quickstart source) rather than building a custom backend push path — deliberately the *minimum* slice pulled forward, not all of Phase 5; full native CallKit lock-screen UI stays deferred, with the existing in-app incoming-call banner standing in, exactly as originally planned. Also proactively added the microphone permission key nothing has hit yet only because no call has ever reached "connected." One known, accepted gap recorded honestly: a cancelled incoming invite doesn't yet auto-dismiss its banner. Full technical account, including every SDK detail verified against Twilio's own source before use, in DECISIONS.md.
-- 🔄 Build 8 (PushKitAdapter) pushed; waiting on CI, then a real incoming-call test.
+- ✅ Build 8 (PushKitAdapter) confirmed: both CI jobs green (Simulator tests + sign-and-upload to TestFlight).
+- ✅ **VoIP Services Certificate obtained and the whole push-credential pipeline wired end to end.** Generated a CSR/private key locally via `openssl` (no Mac needed); owner enabled Push Notifications on the App ID and created the certificate in the Apple Developer Portal from that CSR. Verified the returned certificate (not just accepted it): DER→PEM conversion, subject confirmed as issued for `com.stevenkinney.gottime.voip` under the right Apple team, and confirmed the certificate and the private key are an actual matched pair via an independent modulus-hash comparison. Created the Twilio "Push Credential" via Twilio's Notify API (`POST https://notify.twilio.com/v1/Credentials`, `Sandbox=false` to match the `production` entitlement) — first attempt used the wrong Twilio API surface and got a clean 404, corrected immediately once that was clear. Wired the resulting credential SID into `issue-voice-token` (`push_credential_sid` in the Voice Access Token's grant — without this, Twilio has no way to know which certificate to push a registered device through even with the credential on file), set it as a Supabase secret, and redeployed the function. All 44 backend tests still pass unmodified. Full account in DECISIONS.md.
+- 🔄 **Not yet tested: an actual incoming call reaching a real device.** The pipeline is assembled and deployed, each step confirmed with real evidence (matched modulus, a real 201 from Twilio, passing tests, a successful deploy) — but nobody has placed a real call against it yet. That's the next step.
 
 ## Phase 5 — CallKit / PushKit
-🔄 The registration slice pulled forward into Phase 4 (`PushKitAdapter`, see above) — full
-native CallKit lock-screen UI is still ⬜ not started. 🚧 Will need: a VoIP Services
-Certificate generated via the Apple Developer Portal and uploaded to Twilio's Console (Twilio
-delivers the actual push itself, having chosen not to build a custom direct-APNs push path —
-see DECISIONS.md) — **not** the APNs Auth Key (.p8) originally anticipated here, which was for
-a different architecture this project didn't end up needing.
+🔄 The registration slice, plus the VoIP Services Certificate/Twilio Push Credential it depends
+on, both pulled forward into Phase 4 (`PushKitAdapter`, see above) and confirmed deployed —
+full native CallKit lock-screen UI is still ⬜ not started (the existing in-app incoming-call
+banner stands in for now, as originally planned).
 
 ## Phase 6 — Timer enforcement
 ⬜ Not started.
@@ -104,6 +104,7 @@ a different architecture this project didn't end up needing.
 9. ~~App Store Connect API key + app record~~ — Admin-role Team API key created, app registered as "GotTime? Calling", all four secrets saved; **CI now genuinely signs and uploads a real build to TestFlight, verified by an actual successful run**, not just by the pipeline existing.
 10. ~~Internal Testing group~~ — "Family Tester" group created, automatic build distribution turned on, owner added as a tester (adding a tester turned out to be a separate screen from creating the group itself — normal App Store Connect behavior, not a bug).
 11. ~~Two physical iPhones~~ — both on hand, TestFlight installed, real device testing actually underway (see the crash finding above).
+12. ~~VoIP Services Certificate~~ — generated via the Apple Developer Portal, verified as a matched pair with its private key, and turned into a Twilio Push Credential wired into real token minting (see above).
 
 ## No owner gate currently blocking — real device testing is in progress
 Every setup gate for this phase is cleared. What's happening now is the actual real-device
