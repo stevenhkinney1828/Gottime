@@ -288,11 +288,25 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         return nil
     }
 
+    /// Instrumented after build 15's real retest reported nothing at all on the recipient's
+    /// device — not even one of `applyAndEmit`'s four outcomes — which means the gap is earlier
+    /// than that: possibly right here, if `pendingInvite?.uuid` doesn't actually equal the
+    /// `callUUID` `CallCoordinator` passes in (`incoming.session.callUUID`, this app's own
+    /// `call_uuid` — a value Twilio's SDK has no way to know about when it mints `CallInvite`'s
+    /// own `uuid` on this device). If that's the mismatch, `answer()`/`decline()` throw
+    /// immediately and `invite.accept()`/`.reject()` are never reached at all — a theory floated
+    /// and provisionally set aside earlier for lack of direct evidence; this settles it either
+    /// way. See DECISIONS.md and migration 0010.
     private func pendingInviteMatching(_ callUUID: UUID) -> CallInvite? {
         lock.lock()
-        defer { lock.unlock() }
-        guard pendingInvite?.uuid == callUUID else { return nil }
-        return pendingInvite
+        let invite = pendingInvite
+        lock.unlock()
+        guard invite?.uuid == callUUID else {
+            report(status: "invite_not_pending", detail: "requested=\(callUUID) pendingInviteUUID=\(invite?.uuid.uuidString ?? "nil")")
+            return nil
+        }
+        report(status: "invite_matched", detail: "uuid=\(callUUID)")
+        return invite
     }
 
     private func disconnectActiveCall(matching callUUID: UUID) throws {

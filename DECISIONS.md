@@ -1864,3 +1864,49 @@ same class of bug just fixed, possibly not fully), or `applied` (it worked). Thi
 answers, with real evidence rather than another guess, which specific mechanism is still broken
 on the recipient's side. Build 15. All 44 backend tests unaffected (no backend changes this
 round).
+
+## Build 15's real retest: `last_call_event_status` came back completely null — earlier than expected
+
+Retested with a *different* recipient this time (the wife, not the brother) — same exact
+symptom: she saw the answer/decline UI (confirming the incoming-push pipeline still works),
+tapped Answer, and her screen sat on "Calling..." forever. The owner's own side connected and
+ran a real countdown again, then he ended the call from his side — nothing happened on hers.
+
+**The new diagnostic gave a real, if initially puzzling, answer**: `last_call_event_status` was
+completely `null` for her — not `no_active_session`, not `uuid_mismatch`, not
+`invalid_transition`, not `applied`. None of `applyAndEmit`'s four outcomes ever fired, meaning
+no `CallDelegate` callback (`callDidConnect`, `callDidDisconnect`, anything) ever ran on her
+device for this call — not even when the owner explicitly ended it from his side. Checked her
+other diagnostics before concluding anything: `push_registration_status`/`last_incoming_push_status`
+both show fresh, successful writes seconds before and during the call — ruling out a stale
+auth session as the reason the diagnostic itself went silent. The gap is real, not an artifact
+of the measurement.
+
+**This means the failure is earlier in the call chain than `applyAndEmit`** — somewhere in
+`answer()` itself, before any `CallDelegate` event could even be relevant. Revisited the theory
+floated (and provisionally set aside) during build 14's investigation: a UUID mismatch between
+Twilio's own SDK-generated `CallInvite.uuid` and this app's own `call_uuid`, which would make
+`pendingInviteMatching` fail and `answer()` throw `noPendingInvite` *before* `invite.accept()` is
+ever reached — `CallCoordinator.answerIncomingCall()`'s own `try?` would swallow that silently,
+while its *unconditional* `activeCall = incoming.session` line (set before calling
+`voiceService.answer()` at all) means the UI transitions to a "calling" screen regardless of
+whether the underlying SDK call ever actually starts. That combination — a silently-thrown
+`answer()` plus an unconditionally-optimistic UI update — would look *exactly* like what's been
+observed, on two different people, across two different builds.
+
+This theory was set aside during build 14 specifically because the caller's own successful,
+sustained connection seemed to require the recipient's `accept()` to have succeeded at the
+Twilio/SDK level. That inference may simply have been wrong — nothing has actually verified
+*why* the caller's own `callDidConnect` fires, only that it does; it's possible Twilio's own
+`<Dial>` signaling reaches a "connected" state for the caller's leg independent of whatever
+happens (or doesn't) on the recipient's own local SDK object. Rather than keep reasoning about
+it in the abstract a second time, **instrumented the actual point of uncertainty directly**:
+`pendingInviteMatching` (the single method both `answer()` and `decline()` call before doing
+anything else) now reports one of two new outcomes — `invite_matched` or `invite_not_pending`
+(with the actual requested and currently-pending UUIDs in the detail, so a real mismatch would
+be visible verbatim, not just inferred) — added as two more values on the same
+`last_call_event_status` column (migration `0010_answer_decline_diagnostics.sql`, which had to
+drop and recreate that column's check constraint to extend it — confirmed the real constraint
+name via `pg_constraint` first rather than guessing Postgres's default naming convention was
+right). Build 16. This is the most direct possible settlement of a question that's now been
+raised, reasoned about, and set aside once already — this time with real evidence, either way.
