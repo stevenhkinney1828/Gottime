@@ -1742,3 +1742,88 @@ values into inspectable strings.
 
 Build 13 is this fix, nothing else changed from build 12's intent — still carries the same
 incoming-push diagnostics, just now actually compiling.
+
+## The real root cause, finally: a never-implemented state transition, on both ends, since day one
+
+Build 13's real retest was the best result yet: both accounts hit `last_incoming_push_status:
+"delivered_to_coordinator"` — full confirmation the entire incoming-push pipeline (push received
+→ invite parsed → caller/session context fetched → handed to `TwilioVoiceAdapter`) now works
+end to end. The owner could see and answer a real incoming call for the first time. But: "it
+just sat in the calling mode and never connected," on the CALLER's screen, whether the recipient
+answered *or* explicitly declined — a stuck-forever symptom regardless of outcome.
+
+**Root-caused by reading, not guessing, once the incoming-push mystery was solved and the
+remaining symptom pointed at local call-state handling instead of push delivery.**
+`CallStateMachine.allowedTransitions` (`GotTimeCore`) defines the intended lifecycle as
+`created -> outgoing -> ringing -> connected -> ...`, and `apply()` throws on any transition not
+in that table. `TwilioVoiceAdapter.applyAndEmit` — the single choke point every `CallDelegate`
+callback funnels through — wraps that `apply()` call in `try?`, so an invalid transition doesn't
+crash, it just **silently does nothing**: no state update, no `.statusChanged` event, nothing.
+
+Grepped the whole codebase for anywhere that actually performs the `created -> outgoing`
+transition. **Nowhere does.** `request-call/index.ts` explicitly inserts new rows with
+`status: "created"` and nothing — not `request-call`, not `TwilioVoiceAdapter.startCall`, not
+any Edge Function — ever moves a session to `"outgoing"`. This one missing transition explains
+everything observed, on both ends, and has been true since this code was first written (long
+before tonight's testing began):
+
+- **Caller side**: `activeSession.status` starts at `.created` (from `request-call`'s response).
+  The first real event, `callDidStartRinging` → `applyAndEmit(.ringing, ...)`, calls
+  `CallStateMachine.apply(.ringing, to: session)` where `session.status == .created` —
+  `.created`'s only valid next states are `.outgoing`/`.failed`, so this throws, `try?` eats it,
+  and `activeSession` never changes again. Every subsequent event (`callDidConnect`,
+  `callDidDisconnect`) hits the same dead end forever — exactly a permanently-stuck "Calling..."
+  screen, regardless of what the recipient does, because *nothing* the recipient does can ever
+  successfully update `activeSession` again after the very first failed transition.
+- **Recipient side, a related but structurally separate gap**: `TwilioVoiceAdapter.answer()`
+  never set `activeSession` *at all* — only `activeCall` (the raw SDK `Call` object). So
+  `applyAndEmit`'s own guard (`guard var session = activeSession, ...`) would find `nil` and
+  no-op every single delegate callback on the recipient's own device too, independent of the
+  caller-side bug — the same root gap (a missing/incorrect local session-state transition),
+  reached via a different code path. This also explains why the owner's own screen "got stuck in
+  calling mode" even on the *answering* end, not just the caller's.
+- **`decline` had its own, more proximate compounding bug**: `performCallAction` resolves its
+  session via `currentSession(matching:)`, which only ever checked `activeSession` — never set
+  for an incoming call — so declining silently skipped calling `call-action` entirely (an early
+  `return` inside `performCallAction`, no error, nothing to observe) even before the
+  `CallStateMachine` question was reached. This is exactly the "looks fine, does nothing"
+  failure class this session's diagnostics exist to catch, just in a spot no diagnostic had
+  reached yet.
+- **Server-side, the identical gap independently corrupted `call_sessions`'s own persisted
+  history**: `twilio-status-callback`'s ringing/connected transitions and `call-action`'s
+  `cancel` are all gated on the row already being `"outgoing"`/`"ringing"` — which, given the
+  same missing transition, it never was. `ringing_at`/`connected_at` have been `null` on *every*
+  call this entire project, confirmed directly from `call_sessions` going back to the very first
+  real call — not a new regression, a bug that's been there the whole time, just never diagnosed
+  because nothing before now needed those fields to actually work.
+
+**Fixed all three manifestations of the one real gap, not three separate patches:**
+1. `request-call/index.ts` now inserts new rows with `status: "outgoing"` directly (matching a
+   test file's own long-standing comment — "already covered by request-call's own 'outgoing'" —
+   that turned out to describe intent, not reality). Deployed via `npx supabase functions deploy
+   request-call`. No migration needed — this is an application-code default, not a schema
+   default; the column's own DB-level default stays `'created'`, harmless since this is now the
+   only code path that ever inserts a row.
+2. `TwilioVoiceAdapter.startCall` applies the same `created -> outgoing` transition to the
+   session *locally* right after `request-call` returns, independent of trusting the exact
+   server value — `CallStateMachine.apply`'s own check is what actually matters for
+   `applyAndEmit` to accept the real events that follow.
+3. `TwilioVoiceAdapter.answer` now promotes the incoming invite's session into `activeSession`,
+   pre-advanced through `outgoing -> ringing` (both applied locally, since a call being answered
+   has, by definition, already been ringing — and `callDidStartRinging` is never expected to
+   fire on an *accepted* invite's own `Call` object the way it does for the caller's outgoing
+   side, so there's no later event to wait for instead).
+4. `decline` now calls `performCallAction` *before* clearing `pendingSession`/`pendingInvite`
+   (reordered — it previously cleared first), and `currentSession(matching:)` now falls back to
+   `pendingSession` when `activeSession` isn't set, so a decline's `call-action` invocation
+   actually fires instead of silently short-circuiting.
+
+All 44 backend tests still pass unmodified (the status-string change is real production
+behavior in an adapter class documented from the start as "thin, untested pending a live
+project" — its own pure logic underneath, `requestCall`, was never testing the specific status
+string in the first place).
+
+**This is very likely the actual, complete fix for the core mechanism** — every previous fix
+this session (certificate, `UIBackgroundModes`, incoming-push diagnostics) was a real, necessary
+step to even reach the point where this bug could surface and be observed at all, not wasted
+work. Not yet confirmed on a real device, deliberately not claimed as done until it is.

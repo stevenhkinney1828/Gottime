@@ -32,7 +32,15 @@ class SupabaseRequestCallClient implements RequestCallClient {
         caller_id: params.callerId,
         recipient_id: params.recipientId,
         requested_duration_seconds: params.requestedDurationSeconds,
-        status: "created",
+        // "outgoing", not the column's own "created" default -- CallStateMachine's transition
+        // table (GotTimeCore, mirrored here) requires created->outgoing->ringing->connected in
+        // order, but nothing ever performed that first transition: every session sat at
+        // "created" forever, so twilio-status-callback's ringing/connected updates and
+        // call-action's cancel (both gated on "outgoing"/"ringing") could never apply -- a real,
+        // confirmed bug, not a guess (found from call_sessions never once showing ringing_at/
+        // connected_at set, across every real call this project has ever placed). See
+        // DECISIONS.md.
+        status: "outgoing",
       })
       .select(
         "id, call_uuid, caller_id, recipient_id, requested_duration_seconds, status, " +

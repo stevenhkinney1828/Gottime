@@ -33,6 +33,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     private var activeCall: Call?
     private var activeSession: CallSession?
     private var pendingInvite: CallInvite?
+    private var pendingSession: CallSession?
 
     public init(client: SupabaseClient) {
         self.client = client
@@ -47,7 +48,16 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
     @discardableResult
     public func startCall(to recipient: ConnectedPerson, durationSeconds: Int) async throws -> CallSession {
-        let session = try await requestCallSession(recipientId: recipient.profile.id, durationSeconds: durationSeconds)
+        let createdSession = try await requestCallSession(recipientId: recipient.profile.id, durationSeconds: durationSeconds)
+        // request-call now creates the row as "outgoing" directly (see DECISIONS.md), but this
+        // applies the same transition locally regardless of the exact value the server returned
+        // -- CallStateMachine.apply's own from->to check is what actually matters, and every
+        // subsequent real event (callDidStartRinging/callDidConnect/callDidDisconnect below)
+        // was silently no-op'ing via `try?` in applyAndEmit because activeSession never left
+        // .created, which .ringing can't follow directly. Confirmed via a real device test that
+        // reached "ringing" in Twilio's own logs (see DECISIONS.md) but never advanced past the
+        // caller's own "Calling..." screen.
+        let session = (try? CallStateMachine.apply(.outgoing, to: createdSession, at: .now)) ?? createdSession
         let token = try await issueVoiceAccessToken()
 
         let connectOptions = ConnectOptions(accessToken: token) { builder in
@@ -75,7 +85,22 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
         lock.lock()
         activeCall = call
+        // Promote the invite's session into activeSession, pre-advanced through
+        // outgoing -> ringing, before clearing it. Without this, activeSession stays nil on the
+        // recipient's side for the whole call: applyAndEmit's own guard (`guard var session =
+        // activeSession, ...`) silently no-ops callDidConnect below exactly the same way the
+        // caller's own "Calling..." screen got stuck forever (see startCall's comment and
+        // DECISIONS.md) -- the same root gap on both ends, just reached via different code
+        // paths. callDidStartRinging is never expected to fire on an *accepted* invite's own
+        // Call object the way it does for the caller's outgoing one, so ringing is pre-applied
+        // here rather than waited for.
+        if let session = pendingSession, session.callUUID == callUUID {
+            let ringing = (try? CallStateMachine.apply(.outgoing, to: session, at: .now))
+                .flatMap { try? CallStateMachine.apply(.ringing, to: $0, at: .now) }
+            activeSession = ringing ?? session
+        }
         pendingInvite = nil
+        pendingSession = nil
         lock.unlock()
 
         try? await performCallAction(callUUID: callUUID, action: "answer")
@@ -86,10 +111,16 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
             throw TwilioVoiceAdapterError.noPendingInvite
         }
         invite.reject()
+        // performCallAction looks up its session via currentSession(matching:), which falls
+        // back to pendingSession for exactly this case (see that method) -- so this must run
+        // before pendingSession is cleared below, or call-action never even gets invoked (it
+        // silently returns with nothing to report, the same "looks fine, does nothing" failure
+        // mode this whole session's diagnostics were built to catch). See DECISIONS.md.
+        try? await performCallAction(callUUID: callUUID, action: "decline")
         lock.lock()
         pendingInvite = nil
+        pendingSession = nil
         lock.unlock()
-        try? await performCallAction(callUUID: callUUID, action: "decline")
     }
 
     public func cancel(callUUID: UUID) async throws {
@@ -130,6 +161,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     public func handleIncomingCallInvite(_ callInvite: CallInvite, callerProfile: Profile, session: CallSession) {
         lock.lock()
         pendingInvite = callInvite
+        pendingSession = session
         lock.unlock()
         continuation.yield(.incomingCall(session: session, callerProfile: callerProfile))
     }
@@ -147,7 +179,10 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     public func handleCancelledCallInvite(callSid: String) {
         lock.lock()
         let matchedUUID = pendingInvite?.callSid == callSid ? pendingInvite?.uuid : nil
-        if matchedUUID != nil { pendingInvite = nil }
+        if matchedUUID != nil {
+            pendingInvite = nil
+            pendingSession = nil
+        }
         lock.unlock()
         if let matchedUUID {
             continuation.yield(.callEnded(callUUID: matchedUUID))
@@ -242,11 +277,15 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
     // MARK: - Local state helpers
 
+    /// Falls back to `pendingSession` so `decline` (which never sets `activeSession` — a
+    /// declined call never becomes "active") can still resolve a session id for
+    /// `performCallAction`. See `decline`'s own comment.
     private func currentSession(matching callUUID: UUID) -> CallSession? {
         lock.lock()
         defer { lock.unlock() }
-        guard activeSession?.callUUID == callUUID else { return nil }
-        return activeSession
+        if activeSession?.callUUID == callUUID { return activeSession }
+        if pendingSession?.callUUID == callUUID { return pendingSession }
+        return nil
     }
 
     private func pendingInviteMatching(_ callUUID: UUID) -> CallInvite? {
