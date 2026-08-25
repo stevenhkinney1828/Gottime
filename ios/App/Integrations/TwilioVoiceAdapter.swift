@@ -311,18 +311,59 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// `MockVoiceService.tryApply` does for the mocked path.
     private func applyAndEmit(_ status: CallStatus, callUUID: UUID) {
         lock.lock()
-        guard var session = activeSession, session.callUUID == callUUID,
-            let updated = try? CallStateMachine.apply(status, to: session, at: .now)
-        else {
+        guard let session = activeSession else {
             lock.unlock()
+            report(status: "no_active_session", detail: "attempted=\(status)")
             return
         }
-        session = updated
-        activeSession = session
+        guard session.callUUID == callUUID else {
+            lock.unlock()
+            report(status: "uuid_mismatch", detail: "attempted=\(status) callUUID=\(callUUID) sessionCallUUID=\(session.callUUID)")
+            return
+        }
+        guard let updated = try? CallStateMachine.apply(status, to: session, at: .now) else {
+            lock.unlock()
+            report(status: "invalid_transition", detail: "from=\(session.status) to=\(status)")
+            return
+        }
+        activeSession = updated
         lock.unlock()
-        continuation.yield(.statusChanged(session: session))
-        if session.status.isTerminal {
+        report(status: "applied", detail: "to=\(status)")
+        continuation.yield(.statusChanged(session: updated))
+        if updated.status.isTerminal {
             continuation.yield(.callEnded(callUUID: callUUID))
+        }
+    }
+
+    /// Diagnostic added after build 14's real retest: the caller's side genuinely worked for
+    /// the first time (a real countdown ran), but the recipient's own screen still never left
+    /// its spinner, even though the caller's success proves invite.accept() was reached and
+    /// Twilio genuinely bridged the call. That means the remaining gap is specifically in how
+    /// each device's own CallDelegate events get processed by `applyAndEmit` above afterward --
+    /// distinguishing exactly which of its three failure modes (or success) fires, on both the
+    /// caller's and recipient's own device, rather than guessing a fifth code change blind. See
+    /// DECISIONS.md and migration 0009. Best-effort, same reasoning as the other reporters in
+    /// this file: a failure here must never compound the failure it's diagnosing.
+    private func report(status: String, detail: String?) {
+        struct Update: Encodable {
+            let lastCallEventStatus: String
+            let lastCallEventDetail: String?
+            let lastCallEventUpdatedAt: String
+
+            enum CodingKeys: String, CodingKey {
+                case lastCallEventStatus = "last_call_event_status"
+                case lastCallEventDetail = "last_call_event_detail"
+                case lastCallEventUpdatedAt = "last_call_event_updated_at"
+            }
+        }
+        guard let userId = client.auth.currentSession?.user.id else { return }
+        let update = Update(
+            lastCallEventStatus: status,
+            lastCallEventDetail: detail.map { String($0.prefix(500)) },
+            lastCallEventUpdatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        Task { [client] in
+            try? await client.from("profiles").update(update).eq("id", value: userId).execute()
         }
     }
 }

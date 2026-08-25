@@ -99,8 +99,14 @@ settings:
     # guard, on both the caller's and the recipient's side. Fixed in all three places: request-
     # call now creates rows as "outgoing" directly; startCall applies the same transition
     # locally; answer() promotes the incoming invite's session through outgoing->ringing before
-    # callDidConnect can fire. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "14"
+    # callDidConnect can fire. See DECISIONS.md. 14->15: build 14's real retest was the closest
+    # yet -- the caller's own countdown genuinely ran, a first -- but the recipient's own screen
+    # stayed on a spinner and never connected, even though the caller's success proves Twilio
+    # really did bridge the call. Rather than guess a fifth code change, applyAndEmit (the choke
+    # point every CallDelegate callback funnels through, on both ends) now reports exactly which
+    # of its three failure modes fires, or that it succeeded, to profiles (migration 0009). See
+    # DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "15"
 
 packages:
   GotTimeCore:

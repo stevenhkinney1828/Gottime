@@ -1827,3 +1827,40 @@ string in the first place).
 this session (certificate, `UIBackgroundModes`, incoming-push diagnostics) was a real, necessary
 step to even reach the point where this bug could surface and be observed at all, not wasted
 work. Not yet confirmed on a real device, deliberately not claimed as done until it is.
+
+## Build 14's real retest: the caller's side genuinely works now — first time all project
+
+Real, unambiguous progress: the owner called his brother, and **a real countdown clock started
+running on the caller's own screen** — something that had never once happened before tonight,
+on any build. That confirms the `created -> outgoing` fix is correct and working exactly as
+intended on the caller's side.
+
+**The recipient's own screen, however, stayed on a spinner and never connected**, despite
+answering. Before reaching for a fifth guess, reasoned through what this new result actually
+rules out: the caller's own successful, sustained connection is only possible if Twilio's
+infrastructure genuinely bridged the call — which requires the recipient's `invite.accept()` to
+have actually been called and succeeded at the SDK/Twilio level. That rules out an earlier
+theory floated internally (a UUID mismatch between Twilio's own `CallInvite.uuid` and this
+app's `call_uuid` causing `pendingInviteMatching` to fail and `answer()` to throw before
+`accept()` is ever reached) — if that were happening, Twilio would never have bridged anything,
+and the caller's own countdown would never have started either. Directly checking a theory
+against the evidence already in hand — and discarding it once it didn't hold up — rather than
+shipping it anyway, matters here: it would have been a plausible-sounding but wrong fix, the
+exact failure mode this project has already been burned by twice before (the original Supabase-
+config crash).
+
+**What the evidence actually supports**: the recipient's own device *did* successfully accept
+and bridge the call, but something in how its own `CallDelegate` events (`callDidConnect`
+especially) get processed afterward isn't updating its local state/UI — the same general
+*class* of bug as the `created -> outgoing` gap (a local state transition silently not applying),
+but not yet pinned to a specific cause. Rather than guess which of several plausible mechanisms
+is responsible, added direct instrumentation to `applyAndEmit` (`TwilioVoiceAdapter`'s single
+choke point for every `CallDelegate` callback, on *both* the caller's and recipient's device) —
+it now reports exactly one of four outcomes to `profiles` (migration
+`0009_call_event_diagnostics.sql`, same pattern/deployment as 0007/0008): `no_active_session`
+(the guard's `activeSession` was nil), `uuid_mismatch` (a session existed but its `callUUID`
+didn't match the event), `invalid_transition` (`CallStateMachine.apply` itself rejected it — the
+same class of bug just fixed, possibly not fully), or `applied` (it worked). This directly
+answers, with real evidence rather than another guess, which specific mechanism is still broken
+on the recipient's side. Build 15. All 44 backend tests unaffected (no backend changes this
+round).
