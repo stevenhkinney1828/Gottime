@@ -95,7 +95,7 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
   2. **The two participants' countdown timers visibly desync** — each device was stamping `connectedAt` from its own local clock, and the recipient's device always reaches that moment later (push delivery, DB lookups, human reaction time, SDK negotiation). Fixed by having each device fetch the server's single authoritative `connected_at` once connected and correct itself to match.
   3. **Fix 2 was only possible after finding why the server-side timestamp had never worked at all**: Twilio's real event name is `"in-progress"`, not `"answered"` — confirmed directly from Twilio's own logs on a genuinely successful call. `connected_at` had been `null` for every call this entire project. Fixed the event name.
 - ✅ **Also added the owner's requested duration presets**: 15s, 30s, 1 min, 3 min, alongside the existing 5/10/15/20/30-minute set and Custom — required lowering the duration floor from 60s to 15s across all three enforcement layers (client, server, DB).
-- 🔄 **Build 18. All 44 backend tests pass. Not yet confirmed on a real device** — the timer-sync fix and audio permission fix are both new and warrant a real test.
+- ✅ **Build 18 confirmed on TestFlight** (both CI jobs green, all 44 backend tests pass). Not yet confirmed on a real device — the timer-sync fix and audio permission fix are both new and warrant a real test.
 
 ## Phase 5 — CallKit / PushKit
 🔄 The registration slice, plus the VoIP Services Certificate/Twilio Push Credential it depends
