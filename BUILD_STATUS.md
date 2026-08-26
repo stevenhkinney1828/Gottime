@@ -126,7 +126,8 @@ work directly from the lock screen.
 - ✅ **`CallCoordinator` made properly reactive** to CallKit's native Answer path, and a related
   gap fixed as a side effect: a cancelled/declined incoming call now always clears correctly,
   even when never promoted to an active call.
-- Build 23 pushed to fix build 22's compile error; CI in progress. **Not yet
+- Build 23 (fixing build 22's compile error), both CI jobs confirmed green (Simulator
+  build/test + TestFlight sign & upload). **Not yet
   tested on a real device at all** — this needs a specifically deliberate test: lock the phone
   (or fully force-quit the app) and have someone else call, to check (a) the lock screen shows
   "Name • Duration," (b) native Answer/Decline both work, (c) audio works for a CallKit-answered
