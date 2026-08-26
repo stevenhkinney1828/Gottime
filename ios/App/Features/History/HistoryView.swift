@@ -72,11 +72,14 @@ private struct HistoryRow: View {
 
     private var directionAndDuration: String {
         let direction = entry.isOutgoing ? "Outgoing" : "Incoming"
-        let requestedMinutes = entry.session.requestedDurationSeconds / 60
+        // Was `requestedDurationSeconds / 60`, which truncated any sub-minute preset (e.g. a
+        // real 15-second call) down to "0 min" -- reuses this view's own already-correct
+        // formattedDuration helper below instead of a second, buggy ad hoc calculation.
+        let requested = formattedDuration(entry.session.requestedDurationSeconds)
         if let actual = entry.session.actualDurationSeconds, actual > 0 {
-            return "\(direction) • requested \(requestedMinutes) min • talked \(formattedDuration(actual))"
+            return "\(direction) • requested \(requested) • talked \(formattedDuration(actual))"
         }
-        return "\(direction) • requested \(requestedMinutes) min"
+        return "\(direction) • requested \(requested)"
     }
 
     private func formattedDuration(_ seconds: Int) -> String {

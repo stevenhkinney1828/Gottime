@@ -71,7 +71,7 @@ struct ActiveCallView: View {
                 .font(.title.bold())
                 .foregroundStyle(Color.gtTextPrimary)
             if let actualDuration = session.actualDurationSeconds, actualDuration > 0 {
-                Text(formattedDuration(actualDuration))
+                Text(DurationPolicy.formatDuration(actualDuration))
                     .font(.subheadline)
                     .foregroundStyle(Color.gtTextSecondary)
             }
@@ -137,14 +137,5 @@ struct ActiveCallView: View {
             }
         }
         .accessibilityLabel(label)
-    }
-
-    private func formattedDuration(_ seconds: Int) -> String {
-        let minutes = seconds / 60
-        let remainingSeconds = seconds % 60
-        if minutes == 0 {
-            return "\(remainingSeconds) second\(remainingSeconds == 1 ? "" : "s")"
-        }
-        return "\(minutes) minute\(minutes == 1 ? "" : "s") \(remainingSeconds) second\(remainingSeconds == 1 ? "" : "s")"
     }
 }

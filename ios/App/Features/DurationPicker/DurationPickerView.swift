@@ -14,7 +14,8 @@ struct DurationPickerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedSeconds: Int?
-    @State private var customText: String = ""
+    @State private var customMinutesText: String = ""
+    @State private var customSecondsText: String = ""
     @State private var isCustomSelected = false
     @State private var validationMessage: String?
 
@@ -27,7 +28,7 @@ struct DurationPickerView: View {
 
     private var resolvedSeconds: Int? {
         if isCustomSelected {
-            switch DurationPolicy.parseCustomMinutes(customText) {
+            switch DurationPolicy.parseCustomDuration(minutesText: customMinutesText, secondsText: customSecondsText) {
             case .success(let seconds): return seconds
             case .failure: return nil
             }
@@ -79,7 +80,7 @@ struct DurationPickerView: View {
     private var confirmTitle: String {
         guard let seconds = resolvedSeconds else { return "Call" }
         let name = person.profile.firstName ?? "them"
-        return "Call \(name) for \(durationLabel(seconds))"
+        return "Call \(name) for \(DurationPolicy.formatDuration(seconds))"
     }
 
     private var presetGrid: some View {
@@ -106,49 +107,58 @@ struct DurationPickerView: View {
         seconds < 60 ? "\(seconds) sec" : "\(seconds / 60) min"
     }
 
-    private func durationLabel(_ seconds: Int) -> String {
-        if seconds < 60 {
-            return "\(seconds) second\(seconds == 1 ? "" : "s")"
-        }
-        let minutes = seconds / 60
-        return "\(minutes) minute\(minutes == 1 ? "" : "s")"
-    }
-
+    /// Two separate fields (not one "MM:SS" text field) so numeric-keyboard entry stays simple
+    /// on each side — per the owner's own request for truly arbitrary durations ("5 seconds,"
+    /// "1 minute and 12 seconds," anything), not just the original whole-minutes-only entry.
     @ViewBuilder
     private var customEntry: some View {
         if isCustomSelected {
-            HStack {
-                TextField("1-60", text: $customText)
+            HStack(spacing: 8) {
+                TextField("0", text: $customMinutesText)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.center)
                     .font(.title2)
-                    .frame(width: 80)
+                    .frame(width: 64)
                     .padding(8)
                     .background(Color.gtSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                Text("minutes")
+                Text("min")
+                    .foregroundStyle(Color.gtTextSecondary)
+                TextField("0", text: $customSecondsText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .font(.title2)
+                    .frame(width: 64)
+                    .padding(8)
+                    .background(Color.gtSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                Text("sec")
                     .foregroundStyle(Color.gtTextSecondary)
             }
-            .onChange(of: customText) { _, newValue in
-                validate(newValue)
-            }
+            .onChange(of: customMinutesText) { _, _ in validate() }
+            .onChange(of: customSecondsText) { _, _ in validate() }
         }
     }
 
-    private func validate(_ text: String) {
-        if text.isEmpty {
+    private func validate() {
+        if customMinutesText.isEmpty && customSecondsText.isEmpty {
             validationMessage = nil
             return
         }
-        switch DurationPolicy.parseCustomMinutes(text) {
+        switch DurationPolicy.parseCustomDuration(minutesText: customMinutesText, secondsText: customSecondsText) {
         case .success:
             validationMessage = nil
         case .failure(.notWholeMinutes):
-            validationMessage = "Enter a whole number of minutes."
-        case .failure(.tooShort):
-            validationMessage = "Minimum is 1 minute."
-        case .failure(.tooLong):
-            validationMessage = "Maximum is 60 minutes."
+            validationMessage = "Enter whole numbers — seconds must be 0-59."
+        case .failure(.outOfRange(let seconds)):
+            validationMessage = seconds < DurationPolicy.minimumSeconds
+                ? "Minimum is 15 seconds."
+                : "Maximum is 60 minutes."
+        case .failure(.tooShort), .failure(.tooLong):
+            // parseCustomDuration only ever produces .notWholeMinutes/.outOfRange -- these two
+            // belong to the older whole-minutes-only parseCustomMinutes path, kept for that
+            // function's own callers/tests, not reachable from here.
+            validationMessage = nil
         }
     }
 

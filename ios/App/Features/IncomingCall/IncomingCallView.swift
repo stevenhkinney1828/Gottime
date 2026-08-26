@@ -12,8 +12,8 @@ struct IncomingCallView: View {
 
     @Environment(CallCoordinator.self) private var coordinator
 
-    private var requestedMinutes: Int {
-        session.requestedDurationSeconds / 60
+    private var requestedDurationLabel: String {
+        DurationPolicy.formatDuration(session.requestedDurationSeconds)
     }
 
     var body: some View {
@@ -33,12 +33,12 @@ struct IncomingCallView: View {
                 Text(callerProfile.firstName ?? "Unknown")
                     .font(.largeTitle.bold())
                     .foregroundStyle(Color.gtTextPrimary)
-                Text("\(requestedMinutes) minute\(requestedMinutes == 1 ? "" : "s")")
+                Text(requestedDurationLabel)
                     .font(.title3)
                     .foregroundStyle(Color.gtTextSecondary)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(callerProfile.firstName ?? "Unknown") is calling for \(requestedMinutes) minutes")
+            .accessibilityLabel("\(callerProfile.firstName ?? "Unknown") is calling for \(requestedDurationLabel)")
 
             Spacer()
 

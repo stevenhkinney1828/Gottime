@@ -143,8 +143,16 @@ settings:
     # app's own call_uuid exclusively (for answer/decline/cancel), never Twilio's own uuid
     # fields, which are documented as genuinely optional once no longer forced. Separately, the
     # timer reconciliation's retry window (2s) was far shorter than a realistic time-to-answer
-    # (confirmed ~6s in the actual failed test) -- widened to 60s. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "19"
+    # (confirmed ~6s in the actual failed test) -- widened to 60s. See DECISIONS.md. 19->20:
+    # build 19's retest confirmed the real fix -- audio worked, the countdown synced (a brief,
+    # expected local-then-corrected reset, not a bug), and the call auto-ended at zero. Found one
+    # real display bug testing a 15s call: IncomingCallView/HistoryView both divided
+    # requestedDurationSeconds by 60 with integer division, showing "0 minutes" for anything
+    # under a minute. Fixed, and added a proper minutes+seconds custom-duration entry (replacing
+    # the old whole-minutes-only text field) plus a shared DurationPolicy.formatDuration used
+    # everywhere a duration is displayed, per the owner's own request for fully arbitrary
+    # durations like "1 minute and 12 seconds." See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "20"
 
 packages:
   GotTimeCore:

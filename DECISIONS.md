@@ -2110,3 +2110,51 @@ confirmed and speaker toggling is specifically tested.
 
 Build 19. All 44 backend tests still pass (no backend changes this round). Not yet confirmed on
 a real device.
+
+## Build 19 confirmed: audio works, timer syncs, calls auto-end at zero — Phase 4/6's core mechanism is real
+
+The owner retested and confirmed all three fixes: real two-way audio, the countdown correcting
+itself to the server's authoritative `connected_at` once reconciliation lands (visible as a
+brief reset from the caller's own optimistic guess — expected behavior, not a bug, though worth
+smoothing visually later so it doesn't read as a glitch), and the call genuinely disconnecting
+once the timer reaches zero. This is the actual core deliverable this whole build has been
+working toward since Phase 4 began.
+
+**One real display bug found testing a 15-second call**: the recipient's incoming-call screen
+showed "0 minutes." Root cause, found immediately: both `IncomingCallView` and `HistoryView`
+computed `requestedDurationSeconds / 60` directly — integer division, so anything under 60
+seconds truncates to 0. Neither the underlying timer math (`CallTimer`, already purely
+second-based) nor the live countdown (`CountdownView`, already `"%d:%02d"`-formatted) had this
+bug — only the two places that had never needed to display a sub-minute value before tonight's
+new short presets existed.
+
+**The owner also asked for the fuller feature this was pointing at**: real, arbitrary-duration
+calls — "5 seconds," "1 minute and 12 seconds," anything — not just a fixed set of presets.
+Checked what this actually required across the stack before touching anything: `request-call`'s
+validation and the `call_sessions` CHECK constraint already only bound `requested_duration_seconds`
+to an integer range (15-3600, from the preset-lowering work two builds ago) with no requirement
+that it be a whole minute — so no backend or schema change was needed at all, only the client's
+own custom-entry UI, which had never been asked to produce anything but whole minutes.
+
+**Added to `GotTimeCore.DurationPolicy`** (additive — `validateMinutes`/`parseCustomMinutes`,
+still used by their own existing tests, are untouched): `validateSeconds` (the real 15-3600s
+bound), `parseCustomDuration(minutesText:secondsText:)` (parses two separate fields, either
+blank meaning zero, rejecting anything non-numeric or a seconds value outside 0-59 rather than
+silently reinterpreting "90 seconds in the seconds field" as 1:30), and `formatDuration(_:)` — one
+shared formatter ("15 seconds", "5 minutes", "1 minute 12 seconds", omitting a zero seconds
+component) now used by `IncomingCallView`, `DurationPickerView`'s confirm-button title, and
+`ActiveCallView`'s post-call summary (replacing three slightly different ad hoc
+implementations, one of which was the actual "0 minutes" bug). `HistoryView` keeps its own
+terser "5m 12s" style formatter for visual consistency within that screen, just pointed at the
+correct (`requestedDurationSeconds`) value instead of the buggy truncating one.
+
+**`DurationPickerView`'s custom entry rebuilt as two fields** (minutes, seconds) instead of one
+whole-minutes-only text field — two separate numeric-keyboard fields rather than a single
+"MM:SS" text field, simpler to type into correctly on each side. Wrote `parseCustomDuration`'s
+internal parsing defensively (a small `nonNegativeIntOrZero` helper) rather than a ternary
+mixing `Int` and `Int?` inline — technically legal Swift (optional-promoting ternaries are a
+real, supported pattern) but avoided anyway given there's no local Swift compiler to confirm it,
+matching this project's established caution around exactly this class of mistake.
+
+Build 20. GotTimeCore's own test suite extended for every new function (bounds, parsing,
+formatting) rather than just trusted by inspection. Not yet confirmed on a real device.
