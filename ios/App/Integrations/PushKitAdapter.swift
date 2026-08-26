@@ -1,3 +1,4 @@
+import CallKit
 import Foundation
 import GotTimeCore
 import PushKit
@@ -15,14 +16,16 @@ import TwilioVoice
 public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
     private let client: SupabaseClient
     private let voiceAdapter: TwilioVoiceAdapter
+    private let callKitAdapter: CallKitAdapter
 
     private let lock = NSLock()
     private var registry: PKPushRegistry?
     private var latestToken: Data?
 
-    public init(client: SupabaseClient, voiceAdapter: TwilioVoiceAdapter) {
+    public init(client: SupabaseClient, voiceAdapter: TwilioVoiceAdapter, callKitAdapter: CallKitAdapter) {
         self.client = client
         self.voiceAdapter = voiceAdapter
+        self.callKitAdapter = callKitAdapter
         super.init()
     }
 
@@ -191,16 +194,24 @@ extension PushKitAdapter: PKPushRegistryDelegate {
 extension PushKitAdapter: NotificationDelegate {
     /// `callInvite.from` arrives as `"client:<caller's Supabase user id>"` — the same identity
     /// format `twiml-voice` already verifies server-side. `callSessionId` is the same custom
-    /// parameter `TwilioVoiceAdapter.startCall` embeds on the outgoing side. Silently drops a
-    /// malformed/unresolvable invite rather than crash or surface an error with no UI to show
-    /// it to — matches this adapter's own established risk tolerance elsewhere (`try?`).
+    /// parameter `TwilioVoiceAdapter.startCall` embeds on the outgoing side.
+    ///
+    /// Reports to CallKit *first*, synchronously, before anything else — including before the
+    /// guard that can bail out on a malformed invite. Apple requires `reportNewIncomingCall`
+    /// within (effectively) the same runloop turn a VoIP push arrives, or iOS can terminate the
+    /// app for violating the PushKit/CallKit contract; that requirement doesn't care whether the
+    /// invite turns out to be one this app can actually parse; `callKitAdapter.endReportedCall`
+    /// cleans up immediately after if not.
     public func callInviteReceived(callInvite: CallInvite) {
+        callKitAdapter.reportIncomingCall(callInvite)
+
         guard
             let callerIdString = callInvite.from?.replacingOccurrences(of: "client:", with: ""),
             let callerId = UUID(uuidString: callerIdString),
             let callSessionIdString = callInvite.customParameters?["callSessionId"],
             let callSessionId = UUID(uuidString: callSessionIdString)
         else {
+            callKitAdapter.endReportedCall(callKitUUID: callInvite.uuid, reason: .failed)
             let detail = "from=\(callInvite.from ?? "nil") params=\(callInvite.customParameters ?? [:])"
             Task { [weak self] in
                 await self?.reportIncomingPushStatus(status: "invite_unparseable", detail: detail)
@@ -217,27 +228,40 @@ extension PushKitAdapter: NotificationDelegate {
             do {
                 let context = try await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId)
                 await self.reportIncomingPushStatus(status: "context_fetched", detail: nil)
-                // Previously overrode session.callUUID with callInvite.uuid here (build 17),
-                // needed at the time because TwilioVoiceAdapter matched against Twilio's own
-                // uuid fields. That's no longer true: fixing real audio required no longer
-                // forcing ConnectOptions.uuid/AcceptOptions.uuid (setting them disables the
-                // SDK's automatic audio-device activation -- confirmed via Twilio's own docs),
-                // and Call.uuid/CallInvite.uuid are documented as genuinely optional once that's
-                // no longer forced. TwilioVoiceAdapter now matches entirely on this app's own
-                // call_uuid (pendingInviteMatching/disconnectActiveCall) and Call object
-                // identity (applyAndEmit), so passing the session through unmodified is both
-                // simpler and no longer dependent on a Twilio-internal field at all. See
-                // DECISIONS.md.
+                // session.callUUID is passed through unmodified (no override, unlike build 17's
+                // now-reverted approach) -- TwilioVoiceAdapter matches entirely on this app's own
+                // call_uuid (pendingInviteMatching/disconnectActiveCall) and Call object identity
+                // (applyAndEmit), never on Twilio's own uuid fields. See DECISIONS.md.
                 self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
+                // Corrects the placeholder CallKit was given at report time, now that the
+                // caller's real name and the session's requested duration are actually known --
+                // composed into one localizedCallerName (e.g. "Thunder • 10 min"), per the
+                // owner's own explicit requirement that the lock screen show the requested
+                // duration, not just who's calling.
+                self.callKitAdapter.updateReportedCall(
+                    callKitUUID: callInvite.uuid,
+                    appCallUUID: context.1.callUUID,
+                    callerName: context.0.firstName ?? "Unknown",
+                    requestedDurationSeconds: context.1.requestedDurationSeconds
+                )
                 await self.reportIncomingPushStatus(status: "delivered_to_coordinator", detail: nil)
             } catch {
+                self.callKitAdapter.endReportedCall(callKitUUID: callInvite.uuid, reason: .failed)
                 await self.reportIncomingPushStatus(status: "context_fetch_failed", detail: "\(error)")
             }
         }
     }
 
     public func cancelledCallInviteReceived(cancelledCallInvite: CancelledCallInvite, error: Error) {
-        voiceAdapter.handleCancelledCallInvite(callSid: cancelledCallInvite.callSid)
+        let callKitUUID = voiceAdapter.handleCancelledCallInvite(callSid: cancelledCallInvite.callSid)
+        // The caller gave up before this device answered/declined -- without this, the
+        // already-reported call would keep ringing on the lock screen indefinitely, since
+        // nothing else tells CallKit it's over. handleCancelledCallInvite returns nil if it
+        // didn't match anything currently pending (a stale/duplicate notification), in which
+        // case there's nothing for CallKit to end either.
+        if let callKitUUID {
+            callKitAdapter.endReportedCall(callKitUUID: callKitUUID, reason: .unanswered)
+        }
     }
 }
 

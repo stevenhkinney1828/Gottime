@@ -179,24 +179,46 @@ final class CallCoordinator {
 
     // MARK: - Event handling
 
+    /// `.statusChanged`/`.callEnded` no longer assume `answerIncomingCall()` was the thing that
+    /// answered — CallKit's own native Answer action (see `CallKitAdapter`) calls
+    /// `VoiceService.answer(callUUID:)` directly, with no reason to also duplicate
+    /// `answerIncomingCall()`'s optimistic `activeCall` assignment. Both cases now check
+    /// `incomingCall` too and promote it reactively, so the UI transitions correctly regardless
+    /// of which path triggered the answer/decline/cancel — matching CXProvider(_:perform:)'s own
+    /// role as just another caller of the same underlying VoiceService, not a special case.
     private func handle(_ event: VoiceEvent) {
         switch event {
         case .incomingCall(let session, let callerProfile):
             incomingCall = (session, callerProfile)
 
         case .statusChanged(let session):
-            guard activeCall?.callUUID == session.callUUID else { return }
-            activeCall = session
+            if activeCall?.callUUID == session.callUUID {
+                activeCall = session
+            } else if incomingCall?.session.callUUID == session.callUUID {
+                activeCall = session
+                activeCallOtherPerson = incomingCall?.callerProfile
+                incomingCall = nil
+            } else {
+                return
+            }
             if session.status == .connected {
                 startTicking()
             }
 
         case .callEnded(let callUUID):
-            guard activeCall?.callUUID == callUUID else { return }
-            stopTicking()
-            // activeCall intentionally stays set, now carrying its final terminal status, so
-            // the active-call screen can render the post-call summary. dismissActiveCall()
-            // is what actually clears it once the user acknowledges.
+            if activeCall?.callUUID == callUUID {
+                stopTicking()
+                // activeCall intentionally stays set, now carrying its final terminal status,
+                // so the active-call screen can render the post-call summary.
+                // dismissActiveCall() is what actually clears it once the user acknowledges.
+            } else if incomingCall?.session.callUUID == callUUID {
+                // The pending incoming call ended before ever being answered (declined via
+                // CallKit's native action, or the caller gave up) -- previously a known,
+                // deliberately-accepted gap (the banner/lock-screen call never auto-dismissed in
+                // this exact scenario, see DECISIONS.md); fixed as a side effect of making this
+                // handler properly reactive rather than something needing its own separate fix.
+                incomingCall = nil
+            }
         }
     }
 

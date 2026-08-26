@@ -160,8 +160,27 @@ settings:
     # pendingLocalOutcome (sets the real outcome immediately for local cancel/endEarly actions)
     # and a brief server reconciliation for the recipient-declined case (recorded authoritatively
     # via the recipient's own call-action call, which this device has no other way to learn
-    # about). See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "21"
+    # about). See DECISIONS.md. 21->22: Phase 5 CallKit integration, per the owner's explicit
+    # request to see the requested duration on the lock screen and answer/decline natively, done
+    # "the right way the first time" rather than deferred. Added CallKitAdapter (CXProvider/
+    # CXProviderDelegate) reporting incoming calls with a composed "Name • Duration"
+    # localizedCallerName (no reliable separate subtitle field exists pre-unlock), routing native
+    # Answer/End actions back into TwilioVoiceAdapter, and toggling DefaultAudioDevice activation
+    # from didActivate/didDeactivate. This requires CallKit, not TwilioVoiceAdapter's own SDK, to
+    # own audio-session activation for incoming calls -- so AcceptOptions.uuid is set again
+    # (paired with CallKitAdapter's didActivate handling this time, unlike the build 18 regression
+    # where the same setting was forced with no CallKit present to justify it). Also added
+    # GotTimeAppDelegate (UIApplicationDelegateAdaptor) so VoIP push registration happens at true
+    # app-launch time instead of lazily inside a SwiftUI .task -- needed because a fully
+    # terminated app can only be woken by a VoIP push and must report to CallKit synchronously,
+    # before any view has ever rendered. CallCoordinator's event handler now also promotes an
+    # incoming call to active on CallKit's own native Answer path (which calls voiceAdapter.answer
+    # directly, bypassing this app's own answerIncomingCall()), and correctly clears a
+    # cancelled/declined incoming call that was never promoted. Scoped to incoming calls only this
+    # round; outgoing calls remain on the already-confirmed-working non-CallKit path. Not yet
+    # tested on a real device -- needs a locked-screen/force-quit test specifically, since that is
+    # the exact scenario this build exists for. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "22"
 
 packages:
   GotTimeCore:

@@ -2214,3 +2214,81 @@ Build 21. All 44 backend tests unaffected (no backend changes this round — `ca
 test deliberately (requires timing a real decline vs. letting a real call simply ring out), so
 this is one to specifically exercise both ways next time, not just retest the things already
 proven working.
+
+## Phase 5: CallKit lock-screen integration, and why it needed an AppDelegate change too
+
+Owner confirmed build 21 fully, then set the requirement for this phase directly: "when this
+pops up on the lock screen, I want you to be able to see how much time the person is requesting
+and be able to answer or decline the call" — plus, separately, "we have plenty of time to
+execute this... let's get it right," an explicit instruction to prioritize doing this properly
+over doing it fast, which is why the AppDelegate/early-registration piece below was built now
+rather than deferred as a follow-up.
+
+**New: `CallKitAdapter`** (`ios/App/Integrations/CallKitAdapter.swift`), a `CXProvider`/
+`CXProviderDelegate` wrapper, scoped deliberately to incoming calls only — the caller's own
+outgoing-call side already works correctly without CallKit (confirmed on real devices in Phase
+4), and routing it through CallKit too is a real, separate follow-up nobody has asked for yet.
+`reportIncomingCall(_:)` reports a placeholder to CallKit synchronously the moment a VoIP push
+arrives (Apple can terminate an app that doesn't honor this timing); `updateReportedCall(...)`
+corrects it once the caller's real name and the session's requested duration are known from an
+async database lookup, composing both into one `localizedCallerName` — e.g. "Thunder • 10 min"
+— since CallKit has no reliable separate subtitle field shown before the phone unlocks (this
+exact design was anticipated in the project's original build plan, not improvised here).
+`CXAnswerCallAction`/`CXEndCallAction` route straight into `TwilioVoiceAdapter.answer`/
+`.decline`/`.endEarly`; `CXEndCallAction` tries `decline` first and falls back to `endEarly`
+since one action covers both "decline before answering" and "hang up a connected call," and
+`TwilioVoiceAdapter`'s own tracked state already knows which is valid without this adapter
+duplicating that logic.
+
+**Audio activation had to move from the SDK to CallKit for this path.** Every integration detail
+here was checked against Twilio's own official quickstart source before writing it, not assumed
+from the build-18/19 fix (see that entry above) — that fix's own reasoning still holds
+(`ConnectOptions.uuid`/`AcceptOptions.uuid` tells the SDK "this app manages audio activation,"
+disabling the SDK's automatic activation), but this time there *is* a `CXProviderDelegate` to
+manage it correctly. `AcceptOptions.uuid` is reintroduced in `TwilioVoiceAdapter.answer` — safe
+now, paired with `CallKitAdapter.provider(_:didActivate:)`/`didDeactivate:` toggling
+`DefaultAudioDevice.isEnabled`, unlike the build-18 regression where the same setting was forced
+with nothing to pair it with. Outgoing calls are untouched and still rely on the SDK's own
+automatic activation, which already works.
+
+**This does not reintroduce the build-16/17 uuid-matching bug.** Nothing in `TwilioVoiceAdapter`
+reads `Call.uuid`/`CallInvite.uuid` for matching purposes — `applyAndEmit` still matches by Call
+object identity, and `pendingInviteMatching`/`disconnectActiveCall` still match against this
+app's own `call_uuid`. `CallKitAdapter` is the *one* place CallKit's own uuid space (keyed by
+`CallInvite.uuid`, since that's what `reportNewIncomingCall` is given) is bridged to this app's
+own `call_uuid`, via a small `pendingAppCallUUIDs` dictionary filled in once the async
+caller/session lookup completes.
+
+**New: `GotTimeAppDelegate`** (`ios/App/GotTimeAppDelegate.swift`), replacing `GotTimeApp`'s
+previous plain `.environment()` construction via `@UIApplicationDelegateAdaptor`. Moves VoIP
+push registration from `ContentView`'s `.task` (gated on sign-in, which needs a view to have
+rendered) to `application(_:didFinishLaunchingWithOptions:)` — true app-launch time. This matters
+specifically for the scenario CallKit exists for: a fully *terminated* app woken solely by an
+incoming VoIP push has no rendered `ContentView` yet, so a `.task`-based registration can never
+run in time, but `PKPushRegistry` needs to already be set up for the push to be delivered at all.
+Safe to call unconditionally before sign-in — only the later Twilio-side device-token
+registration needs auth, and that's already deferred correctly inside its own delegate callback.
+`TwilioVoiceAdapter.events`' `AsyncStream` defaults to unbounded buffering, so an incoming call
+handled this early (reported to CallKit, possibly even answered) isn't lost before
+`CallCoordinator` exists to consume it — events queue and replay in order the moment its `init`
+starts consuming the stream on the same cold launch.
+
+**`CallCoordinator.handle(_:)` made properly reactive**, fixing a real gap rather than adding a
+special case for CallKit: `.statusChanged`/`.callEnded` previously only recognized a call as
+"this device's own incoming call" if `answerIncomingCall()` had already optimistically promoted
+it to `activeCall` — true for the in-app Answer button, never true for CallKit's native Answer
+action (which calls `voiceAdapter.answer(callUUID:)` directly). Both cases now also check
+`incomingCall` and promote it reactively when needed. This incidentally fixes a second,
+previously-accepted gap too: a cancelled/declined incoming call that was never promoted now
+correctly clears `incomingCall`, instead of leaving a stale banner/lock-screen call that never
+auto-dismissed.
+
+**Checked and confirmed no additional entitlement/Info.plist change is needed for CallKit
+itself** — `UIBackgroundModes` already includes `voip` (Config/Info.plist, from Phase 4), and
+CallKit's `CXProvider` needs no separate capability declaration beyond that.
+
+Build 22. Every file was re-read in full after writing, for internal consistency, since there is
+still no local Swift toolchain to compile-check any of this — CI's `macos-latest` runner remains
+the only real compiler. Not yet confirmed on a real device; this build specifically needs a
+deliberate locked-screen (and ideally fully force-quit) test, since that's the exact scenario it
+exists for, not just a repeat of the foreground tests already proven working in Phase 4.

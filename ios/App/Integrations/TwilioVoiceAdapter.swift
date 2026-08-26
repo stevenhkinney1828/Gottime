@@ -67,17 +67,19 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
         let connectOptions = ConnectOptions(accessToken: token) { builder in
             builder.params = ["callSessionId": session.id.uuidString]
-            // Deliberately NOT setting builder.uuid. Confirmed directly from Twilio's own
-            // documentation (not guessed): setting ConnectOptions.uuid/AcceptOptions.uuid tells
-            // the SDK "this app manages CallKit's own audio-session activation" -- the SDK then
-            // never automatically enables the audio device, since that's normally done from
-            // CXProviderDelegate.provider(_:didActivate:). This project doesn't use CallKit, so
-            // setting this was silently breaking real audio in both directions the entire time
-            // it was present, even after full two-way signaling started working. Leaving it nil
-            // makes the SDK enable the audio device itself. Because `Call.uuid` is documented as
-            // genuinely optional and has no reason to relate to this app's own call_uuid once
-            // it's no longer forced, matching below no longer reads it at all -- see
-            // applyAndEmit/clearIfActive, and DECISIONS.md.
+            // Deliberately NOT setting builder.uuid, unlike answer()'s AcceptOptions (which now
+            // does set it again, paired with CallKitAdapter -- see that comment). Confirmed
+            // directly from Twilio's own documentation (not guessed): setting ConnectOptions.uuid/
+            // AcceptOptions.uuid tells the SDK "this app manages CallKit's own audio-session
+            // activation" -- the SDK then never automatically enables the audio device unless
+            // something else (a CXProviderDelegate) does. Outgoing calls don't go through
+            // CallKit in this round (see CallKitAdapter's own top-level comment for why that's
+            // scoped out deliberately, not an oversight), so leaving this nil keeps outgoing
+            // calls on the SDK's own automatic audio activation, which already works correctly
+            // — confirmed on real devices. Because `Call.uuid` is documented as genuinely
+            // optional and has no reason to relate to this app's own call_uuid once not forced,
+            // matching below doesn't read it at all regardless of which path a given call took
+            // — see applyAndEmit/clearIfActive, and DECISIONS.md.
         }
         let call = TwilioVoiceSDK.connect(options: connectOptions, delegate: self)
 
@@ -93,9 +95,20 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         guard let invite = pendingInviteMatching(callUUID) else {
             throw TwilioVoiceAdapterError.noPendingInvite
         }
-        // Deliberately NOT setting builder.uuid -- see startCall's own comment; this was
-        // silently disabling automatic audio device activation on the recipient's side too.
-        let acceptOptions = AcceptOptions(callInvite: invite) { _ in }
+        // builder.uuid = invite.uuid IS set here, unlike startCall's ConnectOptions (still
+        // deliberately unset -- outgoing calls stay on the SDK's own automatic audio
+        // management, which already works correctly). Every real incoming call now goes through
+        // CallKit (see CallKitAdapter), which reported this exact invite.uuid to
+        // reportNewIncomingCall -- setting it here is what tells the SDK "audio activation is
+        // externally managed," which CallKitAdapter's own provider(_:didActivate:)/
+        // didDeactivate: now correctly provides. This doesn't reintroduce the earlier uuid-
+        // matching bug (see DECISIONS.md): nothing in this file reads Call.uuid/CallInvite.uuid
+        // for matching anymore (applyAndEmit uses object identity; pendingInviteMatching/
+        // disconnectActiveCall use this app's own call_uuid) -- this uuid exists purely for
+        // CallKit's benefit now.
+        let acceptOptions = AcceptOptions(callInvite: invite) { builder in
+            builder.uuid = invite.uuid
+        }
         let call = invite.accept(options: acceptOptions, delegate: self)
 
         lock.lock()
@@ -197,22 +210,30 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// `CallCoordinator`'s `.callEnded` handling only reacts once `activeCall` is set, which an
     /// invite that's never answered doesn't reach — a known, narrow gap (spec section 16's
     /// edge-case list territory), not something fixable at this layer alone.
-    public func handleCancelledCallInvite(callSid: String) {
+    /// Returns the matched invite's own `.uuid` (CallKit's uuid, distinct from the `callUUID`
+    /// emitted below) so `PushKitAdapter` can also end the corresponding CallKit-reported call —
+    /// otherwise a call the caller gave up on would keep ringing on the lock screen indefinitely.
+    @discardableResult
+    public func handleCancelledCallInvite(callSid: String) -> UUID? {
         lock.lock()
-        // Matched by callSid (Twilio's own call identifier, reliable and unrelated to .uuid)
-        // but emits pendingSession?.callUUID -- this app's own value, matching what
-        // CallCoordinator's incomingCall.session.callUUID actually is. Emitting
-        // pendingInvite?.uuid here instead (as this did before the audio fix) would silently
-        // mismatch, since that's no longer forced to relate to anything CallCoordinator holds.
-        let matchedCallUUID: UUID? = (pendingInvite?.callSid == callSid) ? pendingSession?.callUUID : nil
-        if matchedCallUUID != nil {
+        let matched = pendingInvite?.callSid == callSid
+        // Matched by callSid (Twilio's own call identifier, reliable and unrelated to .uuid).
+        // Emits pendingSession?.callUUID below -- this app's own value, matching what
+        // CallCoordinator's incomingCall.session.callUUID actually is -- not pendingInvite?.uuid
+        // (as this did before the audio fix), which is no longer forced to relate to anything
+        // CallCoordinator holds. callKitUUID (returned separately, for CallKit's own benefit) is
+        // the one place that Twilio-facing value still matters.
+        let appCallUUID = matched ? pendingSession?.callUUID : nil
+        let callKitUUID = matched ? pendingInvite?.uuid : nil
+        if matched {
             pendingInvite = nil
             pendingSession = nil
         }
         lock.unlock()
-        if let matchedCallUUID {
-            continuation.yield(.callEnded(callUUID: matchedCallUUID))
+        if let appCallUUID {
+            continuation.yield(.callEnded(callUUID: appCallUUID))
         }
+        return callKitUUID
     }
 
     /// Registers this device to actually *receive* calls — without this, Twilio has no route to

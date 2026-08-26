@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, auto-end at zero, arbitrary durations; Phase 6's core mechanism rode along for free. Now building full CallKit lock-screen calling, the last major feature gap before reliability/polish/beta — see bottom)**
+**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, auto-end at zero, arbitrary durations; Phase 6's core mechanism rode along for free. Full CallKit lock-screen calling is now built (build 22) and awaiting its real-device test — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -94,15 +94,12 @@ Every one of these was root-caused from real evidence — crash reports, on-scre
 written specifically to answer one question, Twilio's own call/event logs, direct Postgres
 queries — never guessed twice. See DECISIONS.md for the complete technical account.
 
-## Phase 5 — CallKit / PushKit 🔄 in progress
+## Phase 5 — CallKit / PushKit 🔄 in progress, core build complete
 ✅ PushKit VoIP registration (pulled forward into Phase 4 out of necessity — see above),
-confirmed working end to end. 🔄 Full native CallKit lock-screen integration — the actual reason
-this phase exists — starting now. Today, an incoming call only shows up as this app's own
-in-app banner; it doesn't ring on the lock screen, doesn't show in Recents, and can't be
-answered without the app already having a chance to run. CallKit is what makes it behave like a
-real phone call at the OS level. Two explicit owner requirements for this work: the lock screen
-must show the requested duration (not just the caller's name), and Answer/Decline must work
-directly from the lock screen.
+confirmed working end to end. ✅ Full native CallKit lock-screen integration built (build 22),
+🔄 awaiting its real-device test. Two explicit owner requirements drove this work: the lock
+screen must show the requested duration (not just the caller's name), and Answer/Decline must
+work directly from the lock screen.
 
 - ✅ **Owner also asked to distinguish "declined" from "no answer."** Found this was already
   fully designed since Phase 1 (`CallStatus.declined`/`.missed` are distinct cases,
@@ -113,8 +110,26 @@ directly from the lock screen.
   disconnecting; the ambiguous "disconnected, never connected, no local action" case defaults to
   `.missed` and briefly checks the server for `.declined` (recorded authoritatively by the
   *recipient's* own decline action, which the caller's device has no other way to learn about).
-  Build 21. Not yet confirmed on a real device — needs deliberately testing both a decline and a
-  genuine no-answer, not just a retest of what already works.
+  Build 21 confirmed on TestFlight (both CI jobs green). Not yet confirmed on a real device —
+  will be verified together with the CallKit test below, since both need the same kind of
+  deliberate real-call testing.
+- ✅ **`CallKitAdapter` built** (`CXProvider`/`CXProviderDelegate`) — reports incoming calls to
+  the lock screen with a composed "Name • Duration" display, routes native Answer/Decline into
+  `TwilioVoiceAdapter`, and manages audio-session activation for CallKit-answered calls (paired
+  with reintroducing `AcceptOptions.uuid`, safely this time — see DECISIONS.md for why that's
+  different from the build-18 regression). Scoped to incoming calls only; outgoing stays on its
+  already-proven non-CallKit path.
+- ✅ **`GotTimeAppDelegate` added** so VoIP push registration happens at true app-launch time
+  (`UIApplicationDelegateAdaptor`, not a SwiftUI `.task`) — required so a fully terminated app can
+  still be woken and correctly report an incoming call before any view has rendered.
+- ✅ **`CallCoordinator` made properly reactive** to CallKit's native Answer path, and a related
+  gap fixed as a side effect: a cancelled/declined incoming call now always clears correctly,
+  even when never promoted to an active call.
+- Build 22, both CI jobs green (Simulator build/test + TestFlight sign & upload). **Not yet
+  tested on a real device at all** — this needs a specifically deliberate test: lock the phone
+  (or fully force-quit the app) and have someone else call, to check (a) the lock screen shows
+  "Name • Duration," (b) native Answer/Decline both work, (c) audio works for a CallKit-answered
+  call, and (d) a real decline vs. a real no-answer now show as genuinely distinct outcomes.
 
 ## Phase 6 — Timer enforcement ✅ core mechanism confirmed; 🔄 backstop layer not built
 The client-side disconnect-at-zero (spec section 7's actual requirement) is confirmed working

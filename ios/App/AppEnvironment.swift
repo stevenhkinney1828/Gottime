@@ -53,12 +53,17 @@ extension AppEnvironment {
         // (registerDeviceToken/handleIncomingCallInvite) that aren't part of the VoiceService
         // protocol surface, so it holds the concrete TwilioVoiceAdapter type directly.
         let voiceAdapter = TwilioVoiceAdapter(client: client)
+        // CallKitAdapter only needs voiceAdapter (to call answer/decline/endEarly once CallKit's
+        // own native actions fire) — it has no Supabase dependency of its own, everything it
+        // reports to CallKit comes from PushKitAdapter, which already has the caller/session
+        // context by the time it's needed. See CallKitAdapter's own top-level comment.
+        let callKitAdapter = CallKitAdapter(voiceAdapter: voiceAdapter)
         return AppEnvironment(
             authService: SupabaseAuthAdapter(client: client),
             connectionService: SupabaseConnectionAdapter(client: client),
             voiceService: voiceAdapter,
             callHistoryService: mockEnv.callHistoryService,
-            pushService: PushKitAdapter(client: client, voiceAdapter: voiceAdapter)
+            pushService: PushKitAdapter(client: client, voiceAdapter: voiceAdapter, callKitAdapter: callKitAdapter)
         )
     }
 }
