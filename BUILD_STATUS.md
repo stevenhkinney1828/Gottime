@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-26
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24, awaiting its real-device test — see bottom)**
+**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24, confirmed green on CI and uploaded to TestFlight, awaiting its real-device retest — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -148,9 +148,12 @@ its own local expiry from `connectedAt` (mirroring `MockVoiceService.scheduleAut
 and genuinely calls `call.disconnect()` at zero — runs independently on both the caller's and the
 recipient's own device, with no dependency on any view being on screen, which is what actually
 matters for a CallKit-answered, locked-phone call. See DECISIONS.md for the full root-cause
-account. Not yet built: the `pg_cron`/`pg_net` sweep backstop (defense-in-depth for a call that
-somehow slips past the client's own cutoff — part of the original three-layer design, low
-priority relative to confirming the layer above actually works on a real device now).
+account. Build 24 confirmed green on CI (both jobs) and uploaded to TestFlight — **not yet
+confirmed on a real device**; needs the same locked-phone/CallKit test as build 23, this time
+specifically watching that the call actually ends (audio stops) on the answering phone when the
+timer reaches zero. Not yet built: the `pg_cron`/`pg_net` sweep backstop (defense-in-depth for a
+call that somehow slips past the client's own cutoff — part of the original three-layer design,
+low priority relative to confirming the layer above actually works on a real device now).
 
 ## Also fixed in build 24: History was showing mock data, not real calls
 `callHistoryService` had been deliberately left on `MockEnvironment` since Phase 1 while the
