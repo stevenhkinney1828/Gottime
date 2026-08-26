@@ -101,7 +101,7 @@ Legend: ✅ done · 🔄 in progress · ⬜ not started · 🚧 blocked on owner
 - ✅ **Build 19 confirmed on TestFlight, and the owner confirmed the real fix: audio works, the countdown syncs, and calls auto-end at zero.** Phase 4's core deliverable (real two-way audio between two real iPhones, spec section 7's duration enforcement) is genuinely working for the first time. Known follow-up, not yet addressed: `setSpeakerEnabled` replaces the SDK's own audio-session setup block instead of extending it — deferred since it's user-triggered only (tapping speaker) and not the cause of the "no audio at all" symptom that's now fixed.
 - ✅ **One real display bug found testing a 15-second call**: `IncomingCallView`/`HistoryView` divided `requestedDurationSeconds` by 60 with integer division, showing "0 minutes" for anything under a minute. Fixed both, and added a shared `DurationPolicy.formatDuration` used everywhere a duration displays.
 - ✅ **Added the owner's fuller request: truly arbitrary call durations**, not just presets — "5 seconds," "1 minute and 12 seconds," anything from 15 seconds to 60 minutes. No backend/schema change needed (already just an integer-seconds bound, not whole-minutes-only) — rebuilt `DurationPickerView`'s custom entry as two fields (minutes, seconds) with proper validation and parsing in `GotTimeCore.DurationPolicy`, fully covered by new tests.
-- 🔄 **Build 20. Not yet confirmed on a real device.**
+- ✅ **Build 20 confirmed on TestFlight** (both CI jobs green). Not yet confirmed on a real device.
 
 ## Phase 5 — CallKit / PushKit
 🔄 The registration slice, plus the VoIP Services Certificate/Twilio Push Credential it depends
