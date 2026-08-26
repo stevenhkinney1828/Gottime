@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-25
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, auto-end at zero, arbitrary durations; Phase 6's core mechanism rode along for free. Full CallKit lock-screen calling is now built (build 22) and awaiting its real-device test — see bottom)**
+**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, auto-end at zero, arbitrary durations; Phase 6's core mechanism rode along for free. Full CallKit lock-screen calling is now built (build 23, after build 22 failed CI on a real compile error) and awaiting its real-device test — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -96,8 +96,9 @@ queries — never guessed twice. See DECISIONS.md for the complete technical acc
 
 ## Phase 5 — CallKit / PushKit 🔄 in progress, core build complete
 ✅ PushKit VoIP registration (pulled forward into Phase 4 out of necessity — see above),
-confirmed working end to end. ✅ Full native CallKit lock-screen integration built (build 22),
-🔄 awaiting its real-device test. Two explicit owner requirements drove this work: the lock
+confirmed working end to end. ✅ Full native CallKit lock-screen integration built (build 23,
+after build 22 failed CI outright on a real `Self`-in-stored-property-initializer compile error
+— fixed, see DECISIONS.md), 🔄 awaiting its real-device test. Two explicit owner requirements drove this work: the lock
 screen must show the requested duration (not just the caller's name), and Answer/Decline must
 work directly from the lock screen.
 
@@ -125,7 +126,7 @@ work directly from the lock screen.
 - ✅ **`CallCoordinator` made properly reactive** to CallKit's native Answer path, and a related
   gap fixed as a side effect: a cancelled/declined incoming call now always clears correctly,
   even when never promoted to an active call.
-- Build 22, both CI jobs green (Simulator build/test + TestFlight sign & upload). **Not yet
+- Build 23 pushed to fix build 22's compile error; CI in progress. **Not yet
   tested on a real device at all** — this needs a specifically deliberate test: lock the phone
   (or fully force-quit the app) and have someone else call, to check (a) the lock screen shows
   "Name • Duration," (b) native Answer/Decline both work, (c) audio works for a CallKit-answered

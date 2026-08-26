@@ -2292,3 +2292,13 @@ still no local Swift toolchain to compile-check any of this — CI's `macos-late
 the only real compiler. Not yet confirmed on a real device; this build specifically needs a
 deliberate locked-screen (and ideally fully force-quit) test, since that's the exact scenario it
 exists for, not just a repeat of the foreground tests already proven working in Phase 4.
+
+**Build 22 failed CI outright** — a real compile error, exactly the class of mistake manual
+re-reading can't reliably catch: `GotTimeAppDelegate`'s stored property initializer,
+`let environment: AppEnvironment = Self.resolvedEnvironment()`, doesn't type-check. Swift
+disallows referencing the covariant `Self` type from a stored property initializer — a
+restriction that applies even to a `final` class, where `Self` and the concrete type are always
+identical at runtime; the type-checker rejects it anyway, since a property initializer is
+evaluated before `self`'s metatype is considered fully established, regardless of finality. Fixed
+by calling `GotTimeAppDelegate.resolvedEnvironment()` explicitly instead of through `Self`. No
+other errors appeared in the same CI run. Build 23.

@@ -22,7 +22,7 @@ import UIKit
 /// get around to constructing it on this same cold launch. No other synchronization between
 /// this class and `ContentView` is needed for that to work correctly.
 final class GotTimeAppDelegate: NSObject, UIApplicationDelegate {
-    let environment: AppEnvironment = Self.resolvedEnvironment()
+    let environment: AppEnvironment = GotTimeAppDelegate.resolvedEnvironment()
 
     func application(
         _ application: UIApplication,

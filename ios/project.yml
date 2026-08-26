@@ -179,8 +179,13 @@ settings:
     # cancelled/declined incoming call that was never promoted. Scoped to incoming calls only this
     # round; outgoing calls remain on the already-confirmed-working non-CallKit path. Not yet
     # tested on a real device -- needs a locked-screen/force-quit test specifically, since that is
-    # the exact scenario this build exists for. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "22"
+    # the exact scenario this build exists for. See DECISIONS.md. 22->23: build 22 failed to even
+    # compile -- GotTimeAppDelegate's `let environment: AppEnvironment = Self.resolvedEnvironment()`
+    # doesn't type-check; Swift disallows a covariant `Self` reference in a stored property
+    # initializer even on a `final` class. Fixed by naming the type explicitly
+    # (`GotTimeAppDelegate.resolvedEnvironment()`) -- no other errors in the same CI run. See
+    # DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "23"
 
 packages:
   GotTimeCore:
