@@ -1,6 +1,6 @@
 # Build Status
 
-Last updated: 2026-08-26
+Last updated: 2026-08-26 (build 25 confirmed green on CI, both jobs, and uploaded to TestFlight; migration 0012 applied and request-call redeployed to the live project, both independently verified)
 
 **Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24. Owner then asked for a live ticking lock-screen countdown and an optional caller-supplied call topic — both built in build 25, along with a related CallKit-teardown-notification fix; the countdown is flagged best-effort pending real-device confirmation, since research found a documented, unresolved Apple bug affecting exactly this mechanism — see bottom)**
 
