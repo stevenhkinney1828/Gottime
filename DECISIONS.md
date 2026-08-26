@@ -2158,3 +2158,59 @@ matching this project's established caution around exactly this class of mistake
 
 Build 20. GotTimeCore's own test suite extended for every new function (bounds, parsing,
 formatting) rather than just trusted by inspection. Not yet confirmed on a real device.
+
+## Build 20 confirmed working; owner asked for declined-vs-missed — found it was already designed, just never correctly wired
+
+The owner confirmed build 20 end to end (0-minute bug gone, custom minutes+seconds entry
+works), then asked for two things about the CallKit work about to start: the lock screen must
+show the requested duration (already anticipated in this project's own original plan — compose
+it into `CXCallUpdate.localizedCallerName`, e.g. "Thunder • 10 min", since CallKit has no
+reliable separate pre-unlock subtitle field) and, separately, the ability to tell a call the
+recipient explicitly declined apart from one nobody answered.
+
+**Checked before writing anything**: `CallStatus` has had `.declined` and `.missed` as distinct
+cases since Phase 1, `CallStateMachine.allowedTransitions` already treats them as distinct valid
+transitions from `.ringing`, and `ActiveCallView.summaryTitle` already has distinct text for
+both (`"\(name) declined"` / `"No answer"`). The entire *design* for this was already in place —
+what was missing was `TwilioVoiceAdapter` ever actually producing `.missed`, or correctly
+attributing `.declined`, from a real call.
+
+**Root cause**: `callDidDisconnect`'s fallback logic only ever produced `.failed` (error) or
+`.endedEarly` (was connected) — a clean disconnect that never connected always became `.failed`,
+whether that was the recipient explicitly declining, the recipient simply never answering, *or*
+the caller's own explicit Cancel action (which also had no distinct outcome — tapping Cancel
+showed "Call failed," not "Call canceled"). None of this was reachable from the delegate
+callback's own signal alone: Twilio's `Call` object just reports "disconnected," with no
+built-in way to distinguish these cases.
+
+**Fix, in two parts**:
+1. **Local actions get an authoritative label immediately.** Added `pendingLocalOutcome`,
+   set by `cancel()`/`endEarly()` *before* calling `disconnectActiveCall` — so when
+   `callDidDisconnect` fires moments later, it already knows this exact disconnect was a
+   deliberate local action, not something to infer. This also incidentally fixes "Cancel" showing
+   the wrong terminal state, a real but previously-unnoticed bug.
+2. **The recipient-declined case needs the server, not guessing.** The recipient's own explicit
+   decline is already recorded authoritatively server-side (`call-action`'s existing `"decline"`
+   handler, itself fixed a few builds ago) — but the *caller's* device has no direct signal for
+   it. `callDidDisconnect` now defaults an un-explained, never-connected disconnect to `.missed`
+   (only when the session had actually reached `.ringing` — `CallStateMachine` doesn't allow
+   `.missed` from `.outgoing`, so a disconnect before ever ringing correctly stays `.failed`, the
+   original safe behavior for that narrower case), then kicks off `reconcileFinalOutcome`: a
+   short (5×500ms) check of the server's real `call_sessions.status`, correcting the emitted
+   session to `.declined` if that's what actually happened. Unlike `reconcileConnectedAt`'s
+   minute-long window (waiting out realistic human reaction time), a decline is either recorded
+   within a second or two of the disconnect or it never was one — no equivalent delay to wait
+   out here.
+
+`reconcileFinalOutcome` runs *after* `activeCall`/`activeSession` are already cleared (the call
+has genuinely ended by this point), so — unlike every earlier reconciliation this session —
+it can't rely on this adapter's own state still matching anything. It works entirely from an
+`originalSession` snapshot captured before clearing, and emits a freshly-constructed corrected
+`CallSession` directly; `CallCoordinator` matches purely on that session's own `callUUID`, not on
+anything this adapter still holds, so this is safe.
+
+Build 21. All 44 backend tests unaffected (no backend changes this round — `call-action`'s
+`"decline"` path was already correct). Not yet confirmed on a real device; genuinely hard to
+test deliberately (requires timing a real decline vs. letting a real call simply ring out), so
+this is one to specifically exercise both ways next time, not just retest the things already
+proven working.

@@ -34,6 +34,11 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     private var activeSession: CallSession?
     private var pendingInvite: CallInvite?
     private var pendingSession: CallSession?
+    /// Set immediately by `cancel`/`endEarly` before disconnecting, so `callDidDisconnect` (which
+    /// only ever sees a generic "the call ended," with no way to tell *why* on its own) knows
+    /// this exact disconnect was a local, deliberate action rather than something to guess
+    /// about. See `callDidDisconnect`'s own comment.
+    private var pendingLocalOutcome: CallStatus?
 
     public init(client: SupabaseClient) {
         self.client = client
@@ -134,11 +139,17 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     }
 
     public func cancel(callUUID: UUID) async throws {
+        lock.lock()
+        pendingLocalOutcome = .canceled
+        lock.unlock()
         try disconnectActiveCall(matching: callUUID)
         try? await performCallAction(callUUID: callUUID, action: "cancel")
     }
 
     public func endEarly(callUUID: UUID) async throws {
+        lock.lock()
+        pendingLocalOutcome = .endedEarly
+        lock.unlock()
         try disconnectActiveCall(matching: callUUID)
         try? await performCallAction(callUUID: callUUID, action: "end_early")
     }
@@ -424,6 +435,57 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         }
     }
 
+    /// Resolves the one outcome this device's own signal genuinely can't distinguish on its
+    /// own: a clean disconnect before ever connecting, with no local action of this device's
+    /// own to explain it (see `callDidDisconnect`'s own comment — that's already narrowed down
+    /// to "recipient declined" or "recipient never answered in time"). `activeSession`/
+    /// `activeCall` are already cleared by the time this runs (the call has genuinely ended),
+    /// so this works from the `originalSession` snapshot handed to it rather than this
+    /// adapter's own state, and emits a corrected `CallSession` built from that snapshot
+    /// directly — `CallCoordinator` matches purely on the emitted session's own `callUUID`, not
+    /// on anything this adapter still holds. A short window (5 attempts, 500ms apart): a
+    /// decline is either recorded within a second or two of the disconnect (the recipient's own
+    /// `call-action` call almost always lands right around the same time Twilio notifies the
+    /// caller) or it never was a decline at all — unlike `reconcileConnectedAt`, there's no
+    /// human "time to answer" to wait out here. If the server never shows `.declined`, the
+    /// `.missed` already applied stands, which is the correct default for "didn't answer."
+    private func reconcileFinalOutcome(originalSession: CallSession) async {
+        struct Row: Decodable {
+            let status: CallStatus
+        }
+        for _ in 0..<5 {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard
+                let row: Row = try? await client.from("call_sessions")
+                    .select("status")
+                    .eq("id", value: originalSession.id)
+                    .single()
+                    .execute()
+                    .value,
+                row.status == .declined
+            else { continue }
+
+            let corrected = CallSession(
+                id: originalSession.id,
+                callUUID: originalSession.callUUID,
+                callerId: originalSession.callerId,
+                recipientId: originalSession.recipientId,
+                requestedDurationSeconds: originalSession.requestedDurationSeconds,
+                initiatedAt: originalSession.initiatedAt,
+                ringingAt: originalSession.ringingAt,
+                connectedAt: originalSession.connectedAt,
+                endedAt: Date(),
+                actualDurationSeconds: nil,
+                providerCallSid: originalSession.providerCallSid,
+                status: .declined,
+                createdAt: originalSession.createdAt,
+                updatedAt: Date()
+            )
+            continuation.yield(.statusChanged(session: corrected))
+            return
+        }
+    }
+
     /// Diagnostic added after build 14's real retest: the caller's side genuinely worked for
     /// the first time (a real countdown ran), but the recipient's own screen still never left
     /// its spinner, even though the caller's success proves invite.accept() was reached and
@@ -476,16 +538,53 @@ extension TwilioVoiceAdapter: CallDelegate {
     public func callDidDisconnect(call: Call, error: Error?) {
         lock.lock()
         let wasConnected = activeSession?.status == .connected
+        let originalSession = activeSession
+        let localOutcome = pendingLocalOutcome
+        pendingLocalOutcome = nil
         lock.unlock()
-        // A real Twilio-reported error, or a disconnect before ever connecting, is a failure;
-        // a clean disconnect from a connected call is an early hangup. Distinguishing "hung up
-        // on schedule at zero" from this is deliberately not attempted here — same reasoning
-        // as twilio-status-callback's own "completed" no-op: that needs Phase 6's full
-        // duration-enforcement design, and CallStateMachine simply rejects an invalid
-        // .endedEarly attempt on a session this adapter itself already marked .timedOut via
-        // that mechanism, so nothing here can incorrectly overwrite it.
-        applyAndEmit(error != nil ? .failed : (wasConnected ? .endedEarly : .failed), for: call)
+        // A real Twilio-reported error is a failure; a clean disconnect from a connected call is
+        // an early hangup. Distinguishing "hung up on schedule at zero" from an early hangup is
+        // deliberately not attempted here — same reasoning as twilio-status-callback's own
+        // "completed" no-op: that needs Phase 6's full duration-enforcement design, and
+        // CallStateMachine simply rejects an invalid .endedEarly attempt on a session this
+        // adapter itself already marked .timedOut via that mechanism, so nothing here can
+        // incorrectly overwrite it.
+        //
+        // A clean disconnect that never connected is genuinely ambiguous from this device's own
+        // signal alone: the caller's own SDK sees "the call ended," full stop, regardless of
+        // whether the recipient explicitly declined or simply never answered in time —
+        // previously both were mislabeled `.failed` (and even the caller's own explicit
+        // cancel/endEarly action fell into this same generic bucket, showing "Call failed" for
+        // what was actually a deliberate cancel). `pendingLocalOutcome`, set immediately by
+        // `cancel`/`endEarly` before disconnecting, resolves the local-action case outright.
+        // Otherwise this defaults to `.missed` and kicks off a brief server check for
+        // `.declined` — set authoritatively by the *recipient's* own explicit decline action via
+        // call-action, which this device has no other way to learn about. See
+        // `reconcileFinalOutcome`'s own comment.
+        // `.missed` is only a valid transition from `.ringing` (CallStateMachine); a clean
+        // disconnect while still `.outgoing` (Twilio never got as far as ringing the recipient
+        // at all) falls back to `.failed` instead, matching the original safe behavior for that
+        // narrower case rather than risking an invalid-transition no-op for a label that isn't
+        // really earned yet.
+        let status: CallStatus
+        if let localOutcome {
+            status = localOutcome
+        } else if error != nil {
+            status = .failed
+        } else if wasConnected {
+            status = .endedEarly
+        } else if originalSession?.status == .ringing {
+            status = .missed
+        } else {
+            status = .failed
+        }
+        applyAndEmit(status, for: call)
         clearIfActive(call)
+        // Only worth checking for a decline if this was actually applied as .missed above --
+        // the recipient can't decline a call that never reached them in the first place.
+        if status == .missed, let originalSession {
+            Task { [weak self] in await self?.reconcileFinalOutcome(originalSession: originalSession) }
+        }
     }
 
     public func callIsReconnecting(call: Call, error: Error) {}

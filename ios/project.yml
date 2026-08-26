@@ -151,8 +151,17 @@ settings:
     # under a minute. Fixed, and added a proper minutes+seconds custom-duration entry (replacing
     # the old whole-minutes-only text field) plus a shared DurationPolicy.formatDuration used
     # everywhere a duration is displayed, per the owner's own request for fully arbitrary
-    # durations like "1 minute and 12 seconds." See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "20"
+    # durations like "1 minute and 12 seconds." See DECISIONS.md. 20->21: owner asked to be able
+    # to tell a declined call apart from one nobody answered. Found this was already fully
+    # designed into CallStatus/CallStateMachine/ActiveCallView since Phase 1 (.declined and
+    # .missed are distinct cases with distinct summary text) but never correctly produced by the
+    # real TwilioVoiceAdapter -- callDidDisconnect always fell back to .failed for any
+    # never-connected disconnect, including the caller's own explicit cancel. Added
+    # pendingLocalOutcome (sets the real outcome immediately for local cancel/endEarly actions)
+    # and a brief server reconciliation for the recipient-declined case (recorded authoritatively
+    # via the recipient's own call-action call, which this device has no other way to learn
+    # about). See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "21"
 
 packages:
   GotTimeCore:
