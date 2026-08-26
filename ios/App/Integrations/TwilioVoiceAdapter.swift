@@ -40,6 +40,16 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// about. See `callDidDisconnect`'s own comment.
     private var pendingLocalOutcome: CallStatus?
 
+    /// A direct, synchronous mirror of every event this adapter also yields via `events` —
+    /// `CallKitAdapter` needs its own copy (to start/stop its lock-screen countdown and end a
+    /// CallKit-reported call the moment the real call ends), but `AsyncStream` only delivers
+    /// each event to whichever single consumer happens to be awaiting `next()`, not to every
+    /// interested party — a second `for await` loop over the same `events` stream would
+    /// silently steal events from `CallCoordinator`'s own consumption rather than both sides
+    /// reliably seeing every event. A closure sidesteps that: `AppEnvironment.live()` wires this
+    /// to `CallKitAdapter.handle(_:)` once both are constructed. See `emit(_:)`.
+    public var onVoiceEvent: ((VoiceEvent) -> Void)?
+
     public init(client: SupabaseClient) {
         self.client = client
         let (stream, continuation) = AsyncStream<VoiceEvent>.makeStream()
@@ -52,8 +62,8 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     // MARK: - VoiceService
 
     @discardableResult
-    public func startCall(to recipient: ConnectedPerson, durationSeconds: Int) async throws -> CallSession {
-        let createdSession = try await requestCallSession(recipientId: recipient.profile.id, durationSeconds: durationSeconds)
+    public func startCall(to recipient: ConnectedPerson, durationSeconds: Int, topic: String? = nil) async throws -> CallSession {
+        let createdSession = try await requestCallSession(recipientId: recipient.profile.id, durationSeconds: durationSeconds, topic: topic)
         // request-call now creates the row as "outgoing" directly (see DECISIONS.md), but this
         // applies the same transition locally regardless of the exact value the server returned
         // -- CallStateMachine.apply's own from->to check is what actually matters, and every
@@ -197,7 +207,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         pendingInvite = callInvite
         pendingSession = session
         lock.unlock()
-        continuation.yield(.incomingCall(session: session, callerProfile: callerProfile))
+        emit(.incomingCall(session: session, callerProfile: callerProfile))
     }
 
     /// Called by `PushKitAdapter`'s `NotificationDelegate.cancelledCallInviteReceived(...)` when
@@ -231,9 +241,17 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         }
         lock.unlock()
         if let appCallUUID {
-            continuation.yield(.callEnded(callUUID: appCallUUID))
+            emit(.callEnded(callUUID: appCallUUID))
         }
         return callKitUUID
+    }
+
+    /// Every event this adapter reports goes through here — both to `events` (consumed by
+    /// `CallCoordinator`) and, synchronously, to `onVoiceEvent` (consumed by `CallKitAdapter`).
+    /// See `onVoiceEvent`'s own doc comment for why a second `AsyncStream` consumer isn't safe.
+    private func emit(_ event: VoiceEvent) {
+        continuation.yield(event)
+        onVoiceEvent?(event)
     }
 
     /// Registers this device to actually *receive* calls — without this, Twilio has no route to
@@ -260,10 +278,11 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
     // MARK: - Backend calls
 
-    private func requestCallSession(recipientId: UUID, durationSeconds: Int) async throws -> CallSession {
+    private func requestCallSession(recipientId: UUID, durationSeconds: Int, topic: String?) async throws -> CallSession {
         struct RequestBody: Encodable {
             let recipientId: UUID
             let requestedDurationSeconds: Int
+            let topic: String?
         }
         struct ResponseBody: Decodable {
             let session: CallSessionRow
@@ -271,7 +290,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         let response: ResponseBody = try await client.functions.invoke(
             "request-call",
             options: FunctionInvokeOptions(
-                body: RequestBody(recipientId: recipientId, requestedDurationSeconds: durationSeconds)
+                body: RequestBody(recipientId: recipientId, requestedDurationSeconds: durationSeconds, topic: topic)
             ),
             decoder: Self.postgresTimestampDecoder
         )
@@ -400,9 +419,9 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         activeSession = updated
         lock.unlock()
         report(status: "applied", detail: "to=\(status)")
-        continuation.yield(.statusChanged(session: updated))
+        emit(.statusChanged(session: updated))
         if updated.status.isTerminal {
-            continuation.yield(.callEnded(callUUID: updated.callUUID))
+            emit(.callEnded(callUUID: updated.callUUID))
         }
         if status == .connected, let connectedAt = updated.connectedAt {
             Task { [weak self] in await self?.reconcileConnectedAt(callUUID: updated.callUUID) }
@@ -491,7 +510,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
             current.connectedAt = serverConnectedAt
             activeSession = current
             lock.unlock()
-            continuation.yield(.statusChanged(session: current))
+            emit(.statusChanged(session: current))
             return
         }
     }
@@ -532,6 +551,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
                 callerId: originalSession.callerId,
                 recipientId: originalSession.recipientId,
                 requestedDurationSeconds: originalSession.requestedDurationSeconds,
+                topic: originalSession.topic,
                 initiatedAt: originalSession.initiatedAt,
                 ringingAt: originalSession.ringingAt,
                 connectedAt: originalSession.connectedAt,
@@ -542,7 +562,7 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
                 createdAt: originalSession.createdAt,
                 updatedAt: Date()
             )
-            continuation.yield(.statusChanged(session: corrected))
+            emit(.statusChanged(session: corrected))
             return
         }
     }
@@ -672,6 +692,7 @@ private struct CallSessionRow: Decodable {
     let callerId: UUID
     let recipientId: UUID
     let requestedDurationSeconds: Int
+    let topic: String?
     let status: CallStatus
     let initiatedAt: Date
     let createdAt: Date
@@ -680,7 +701,7 @@ private struct CallSessionRow: Decodable {
     enum CodingKeys: String, CodingKey {
         case id
         case callUUID = "callUuid"
-        case callerId, recipientId, requestedDurationSeconds, status, initiatedAt, createdAt, updatedAt
+        case callerId, recipientId, requestedDurationSeconds, topic, status, initiatedAt, createdAt, updatedAt
     }
 
     var session: CallSession {
@@ -690,6 +711,7 @@ private struct CallSessionRow: Decodable {
             callerId: callerId,
             recipientId: recipientId,
             requestedDurationSeconds: requestedDurationSeconds,
+            topic: topic,
             initiatedAt: initiatedAt,
             status: status,
             createdAt: createdAt,

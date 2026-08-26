@@ -61,6 +61,12 @@ extension AppEnvironment {
         // reports to CallKit comes from PushKitAdapter, which already has the caller/session
         // context by the time it's needed. See CallKitAdapter's own top-level comment.
         let callKitAdapter = CallKitAdapter(voiceAdapter: voiceAdapter)
+        // Wired here, once both exist, rather than either constructor taking the other directly
+        // — voiceAdapter has no reason to know CallKitAdapter's concrete type, and a closure
+        // avoids the circular-construction-order problem a stored reference would create. See
+        // TwilioVoiceAdapter.onVoiceEvent's own comment for why this can't just be a second
+        // `for await` loop over voiceAdapter.events instead.
+        voiceAdapter.onVoiceEvent = { [weak callKitAdapter] event in callKitAdapter?.handle(event) }
         return AppEnvironment(
             authService: SupabaseAuthAdapter(client: client),
             connectionService: SupabaseConnectionAdapter(client: client),

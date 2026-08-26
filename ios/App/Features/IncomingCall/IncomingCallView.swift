@@ -16,6 +16,12 @@ struct IncomingCallView: View {
         DurationPolicy.formatDuration(session.requestedDurationSeconds)
     }
 
+    private var accessibilityLabel: String {
+        let base = "\(callerProfile.firstName ?? "Unknown") is calling for \(requestedDurationLabel)"
+        guard let topic = session.topic, !topic.isEmpty else { return base }
+        return "\(base), about \(topic)"
+    }
+
     var body: some View {
         VStack(spacing: 32) {
             Spacer()
@@ -36,9 +42,16 @@ struct IncomingCallView: View {
                 Text(requestedDurationLabel)
                     .font(.title3)
                     .foregroundStyle(Color.gtTextSecondary)
+                if let topic = session.topic, !topic.isEmpty {
+                    Text(topic)
+                        .font(.body)
+                        .foregroundStyle(Color.gtTextSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(callerProfile.firstName ?? "Unknown") is calling for \(requestedDurationLabel)")
+            .accessibilityLabel(accessibilityLabel)
 
             Spacer()
 

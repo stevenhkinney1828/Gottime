@@ -10,6 +10,8 @@ export interface CallSessionRecord {
   recipientId: string;
   requestedDurationSeconds: number;
   status: string;
+  /** Optional caller-supplied context ("what's this about") — see sanitizeTopic below. */
+  topic: string | null;
   /** ISO 8601 strings — the iOS client's CallSession requires all three non-optional; the
    * other lifecycle timestamps (ringingAt/connectedAt/endedAt/etc.) are correctly absent from
    * a freshly-created session and decode as nil client-side without needing to appear here. */
@@ -21,7 +23,12 @@ export interface CallSessionRecord {
 export interface RequestCallClient {
   hasActiveConnection(userA: string, userB: string): Promise<boolean>;
   createCallSession(
-    params: { callerId: string; recipientId: string; requestedDurationSeconds: number },
+    params: {
+      callerId: string;
+      recipientId: string;
+      requestedDurationSeconds: number;
+      topic: string | null;
+    },
   ): Promise<CallSessionRecord>;
 }
 
@@ -42,9 +49,29 @@ function isValidDurationSeconds(value: unknown): value is number {
     value >= MIN_DURATION_SECONDS && value <= MAX_DURATION_SECONDS;
 }
 
+const MAX_TOPIC_LENGTH = 140;
+
+/** Optional, caller-supplied context that shows up alongside their name during ring/connect —
+ * "what's this about" (see DECISIONS.md, the owner's own request). Never required, never
+ * validated as strictly as duration: a missing/blank/whitespace-only topic normalizes to null
+ * (matches the intent: "nothing to add"), and an over-length one is truncated rather than
+ * rejected, so a long caller-typed sentence can't fail an entire call request over something
+ * this minor. Matches the DB's own length CHECK constraint (0012_add_call_topic.sql). */
+function sanitizeTopic(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.length > MAX_TOPIC_LENGTH ? trimmed.slice(0, MAX_TOPIC_LENGTH) : trimmed;
+}
+
 export async function requestCall(
   client: RequestCallClient,
-  params: { callerId: string; recipientId: string; requestedDurationSeconds: unknown },
+  params: {
+    callerId: string;
+    recipientId: string;
+    requestedDurationSeconds: unknown;
+    topic?: unknown;
+  },
 ): Promise<RequestCallResult> {
   const { callerId, recipientId, requestedDurationSeconds } = params;
 
@@ -73,6 +100,7 @@ export async function requestCall(
     callerId,
     recipientId,
     requestedDurationSeconds,
+    topic: sanitizeTopic(params.topic),
   });
   return { ok: true, session };
 }

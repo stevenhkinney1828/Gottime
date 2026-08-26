@@ -7,7 +7,14 @@ import {
 
 class FakeRequestCallClient implements RequestCallClient {
   activeConnections = new Set<string>();
-  created: Array<{ callerId: string; recipientId: string; requestedDurationSeconds: number }> = [];
+  created: Array<
+    {
+      callerId: string;
+      recipientId: string;
+      requestedDurationSeconds: number;
+      topic: string | null;
+    }
+  > = [];
 
   private pairKey(a: string, b: string): string {
     return [a, b].sort().join("|");
@@ -22,7 +29,12 @@ class FakeRequestCallClient implements RequestCallClient {
   }
 
   createCallSession(
-    params: { callerId: string; recipientId: string; requestedDurationSeconds: number },
+    params: {
+      callerId: string;
+      recipientId: string;
+      requestedDurationSeconds: number;
+      topic: string | null;
+    },
   ): Promise<CallSessionRecord> {
     this.created.push(params);
     const now = new Date().toISOString();
@@ -32,6 +44,7 @@ class FakeRequestCallClient implements RequestCallClient {
       callerId: params.callerId,
       recipientId: params.recipientId,
       requestedDurationSeconds: params.requestedDurationSeconds,
+      topic: params.topic,
       status: "created",
       initiatedAt: now,
       createdAt: now,
@@ -141,4 +154,51 @@ Deno.test("connection check is symmetric regardless of who initiated it", async 
   if (!result.ok) {
     throw new Error(`expected symmetric connection lookup to succeed: ${result.error}`);
   }
+});
+
+Deno.test("topic is trimmed and passed through when present", async () => {
+  const client = new FakeRequestCallClient();
+  client.connect(ALICE, BOB);
+
+  const result = await requestCall(client, {
+    callerId: ALICE,
+    recipientId: BOB,
+    requestedDurationSeconds: 600,
+    topic: "  dinner tonight  ",
+  });
+  if (!result.ok) throw new Error(`expected ok, got error: ${result.error}`);
+  assertEquals(result.session.topic, "dinner tonight");
+});
+
+Deno.test("a missing, blank, or non-string topic normalizes to null rather than rejecting the call", async () => {
+  const client = new FakeRequestCallClient();
+  client.connect(ALICE, BOB);
+
+  for (const topic of [undefined, "", "   ", 42, null]) {
+    const result = await requestCall(client, {
+      callerId: ALICE,
+      recipientId: BOB,
+      requestedDurationSeconds: 600,
+      topic,
+    });
+    if (!result.ok) {
+      throw new Error(`expected ${JSON.stringify(topic)} to be accepted, got: ${result.error}`);
+    }
+    assertEquals(result.session.topic, null);
+  }
+});
+
+Deno.test("an over-length topic is truncated rather than rejecting the call", async () => {
+  const client = new FakeRequestCallClient();
+  client.connect(ALICE, BOB);
+  const longTopic = "a".repeat(200);
+
+  const result = await requestCall(client, {
+    callerId: ALICE,
+    recipientId: BOB,
+    requestedDurationSeconds: 600,
+    topic: longTopic,
+  });
+  if (!result.ok) throw new Error(`expected ok, got error: ${result.error}`);
+  assertEquals(result.session.topic?.length, 140);
 });

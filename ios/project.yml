@@ -198,8 +198,27 @@ settings:
     # while the harder voice/CallKit work took priority (see AppEnvironment.swift's own doc
     # comment); added a real `SupabaseCallHistoryAdapter` reading directly from `call_sessions`,
     # exactly as `CallHistoryService`'s protocol doc comment always said a real implementation
-    # would. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "24"
+    # would. See DECISIONS.md. 24->25: two owner-requested features. (1) A live ticking
+    # lock-screen countdown -- CallKitAdapter now updates its CXCallUpdate once per second while
+    # connected. Real research turned up multiple long-standing Apple Developer Forum reports
+    # that this exact mechanism (reportCall(with:updated:) on an already-active call) frequently
+    # fails to visibly refresh on real hardware across iOS 17-18 with no confirmed fix -- built
+    # anyway since the owner explicitly asked for it, but flagged as best-effort, not guaranteed;
+    # the real-device test this build needs must specifically check whether it actually ticks.
+    # Closed a related real gap found while building this: nothing previously told CallKit when a
+    # call ended for a reason CallKit didn't itself initiate (this device's own new
+    # scheduleAutoExpiry timeout, or the other participant hanging up) -- TwilioVoiceAdapter now
+    # exposes onVoiceEvent, a direct closure mirror of every event it already yields via `events`
+    # (a second AsyncStream consumer would have silently split events between CallCoordinator and
+    # CallKitAdapter rather than both reliably seeing every one), which CallKitAdapter uses to end
+    # its own CallKit-reported call and start the countdown at the right moment. (2) An optional
+    # caller-supplied call topic ("what's this about") shown alongside name/duration -- new
+    # `call_sessions.topic` column (migration 0012), request-call's own sanitizeTopic (trims,
+    # truncates rather than rejects, blank normalizes to null), a new field on DurationPickerView,
+    # and threaded through CallSession/VoiceService/TwilioVoiceAdapter/PushKitAdapter into
+    # CallKitAdapter's composed localizedCallerName (e.g. "Thunder • 10 min • Dinner tonight") and
+    # IncomingCallView. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "25"
 
 packages:
   GotTimeCore:

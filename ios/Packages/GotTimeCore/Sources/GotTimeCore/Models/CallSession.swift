@@ -7,6 +7,10 @@ public struct CallSession: Identifiable, Equatable, Sendable, Codable {
     public let callerId: UUID
     public let recipientId: UUID
     public let requestedDurationSeconds: Int
+    /// Optional caller-supplied context ("what's this about") — shown alongside name/duration
+    /// on the recipient's lock screen and in History. Never required, never validated as
+    /// strictly as duration (see request-call/logic.ts's sanitizeTopic).
+    public let topic: String?
     public let initiatedAt: Date
     public var ringingAt: Date?
     public var connectedAt: Date?
@@ -23,6 +27,7 @@ public struct CallSession: Identifiable, Equatable, Sendable, Codable {
         callerId: UUID,
         recipientId: UUID,
         requestedDurationSeconds: Int,
+        topic: String? = nil,
         initiatedAt: Date,
         ringingAt: Date? = nil,
         connectedAt: Date? = nil,
@@ -38,6 +43,7 @@ public struct CallSession: Identifiable, Equatable, Sendable, Codable {
         self.callerId = callerId
         self.recipientId = recipientId
         self.requestedDurationSeconds = requestedDurationSeconds
+        self.topic = topic
         self.initiatedAt = initiatedAt
         self.ringingAt = ringingAt
         self.connectedAt = connectedAt

@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-26
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24, confirmed green on CI and uploaded to TestFlight, awaiting its real-device retest — see bottom)**
+**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24. Owner then asked for a live ticking lock-screen countdown and an optional caller-supplied call topic — both built in build 25, along with a related CallKit-teardown-notification fix; the countdown is flagged best-effort pending real-device confirmation, since research found a documented, unresolved Apple bug affecting exactly this mechanism — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -129,13 +129,26 @@ work directly from the lock screen.
 - ✅ **Build 23 confirmed on a real locked phone**: lock-screen answer via CallKit's native UI
   worked — the actual core deliverable of this phase. The same test surfaced two real gaps, both
   unrelated to CallKit itself and both fixed in build 24 (see Phase 6 below for the serious one):
-  no visible countdown while the phone stayed locked (a real platform constraint, not a bug —
-  Apple's own native call screen has no custom "time remaining" display; see DECISIONS.md for the
-  possible live-label workaround, not built yet, left as an open question), and the call answered
-  from the lock screen never actually ending when the timer reached zero.
-- 🔄 **Not yet confirmed**: whether native Answer/Decline both work, and whether declined vs.
-  no-answer now show as genuinely distinct History outcomes (build 21's own fix) — needs the same
-  deliberate real-call testing as build 24 below.
+  no visible countdown while the phone stayed locked, and the call answered from the lock screen
+  never actually ending when the timer reached zero.
+- ✅ **Build 25: live ticking lock-screen countdown + optional call topic, per the owner's own
+  follow-up requests.** `CallKitAdapter` now updates its displayed label once per second while
+  connected (e.g. "Thunder • 4:32 left • Dinner tonight"), and callers can now optionally type
+  what a call is about, shown alongside name/duration both on the lock screen and in the in-app
+  incoming-call screen. **The countdown is explicitly flagged best-effort, not guaranteed** — real
+  research (not guessed) found multiple long-standing, still-unresolved Apple Developer Forum
+  reports that this exact mechanism (`CXProvider.reportCall(with:updated:)` on an already-active
+  call) frequently fails to visibly refresh on real hardware, spanning iOS 17-18. Built anyway
+  since it was explicitly requested and costs little either way; the upcoming real-device test
+  needs to specifically settle whether it actually ticks on the owner's own phones. Also closed a
+  related gap found while building this: nothing previously told CallKit when a call ended for a
+  reason it didn't itself initiate (a remote hangup, or this device's own new auto-expiry timeout)
+  — see DECISIONS.md for the full account, including why this needed a closure
+  (`TwilioVoiceAdapter.onVoiceEvent`) rather than a second consumer of the existing event stream.
+- 🔄 **Not yet confirmed**: whether native Answer/Decline both work, whether declined vs.
+  no-answer now show as genuinely distinct History outcomes (build 21's own fix), whether the
+  ticking countdown actually ticks, and whether a typed topic shows up correctly — needs the same
+  deliberate real-call testing as build 24/25.
 
 ## Phase 6 — Timer enforcement 🔄 core mechanism actually just built for real
 **Correction to this section's previous claim**: the client-side disconnect-at-zero was

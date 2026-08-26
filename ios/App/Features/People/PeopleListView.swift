@@ -19,6 +19,7 @@ struct PeopleListView: View {
     private struct PendingCall {
         let person: ConnectedPerson
         let durationSeconds: Int
+        let topic: String?
     }
 
     var body: some View {
@@ -47,11 +48,13 @@ struct PeopleListView: View {
         .sheet(item: $selectedPerson, onDismiss: {
             guard let pendingCall else { return }
             self.pendingCall = nil
-            Task { await coordinator.call(pendingCall.person, durationSeconds: pendingCall.durationSeconds) }
+            Task {
+                await coordinator.call(pendingCall.person, durationSeconds: pendingCall.durationSeconds, topic: pendingCall.topic)
+            }
         }) { person in
             NavigationStack {
-                DurationPickerView(person: person) { durationSeconds in
-                    pendingCall = PendingCall(person: person, durationSeconds: durationSeconds)
+                DurationPickerView(person: person) { durationSeconds, topic in
+                    pendingCall = PendingCall(person: person, durationSeconds: durationSeconds, topic: topic)
                 }
             }
         }

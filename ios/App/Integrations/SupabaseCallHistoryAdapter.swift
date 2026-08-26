@@ -60,6 +60,7 @@ private struct CallSessionHistoryRow: Decodable {
     let callerId: UUID
     let recipientId: UUID
     let requestedDurationSeconds: Int
+    let topic: String?
     let initiatedAt: Date
     let ringingAt: Date?
     let connectedAt: Date?
@@ -76,6 +77,7 @@ private struct CallSessionHistoryRow: Decodable {
         case callerId = "caller_id"
         case recipientId = "recipient_id"
         case requestedDurationSeconds = "requested_duration_seconds"
+        case topic
         case initiatedAt = "initiated_at"
         case ringingAt = "ringing_at"
         case connectedAt = "connected_at"
@@ -94,6 +96,7 @@ private struct CallSessionHistoryRow: Decodable {
             callerId: callerId,
             recipientId: recipientId,
             requestedDurationSeconds: requestedDurationSeconds,
+            topic: topic,
             initiatedAt: initiatedAt,
             ringingAt: ringingAt,
             connectedAt: connectedAt,

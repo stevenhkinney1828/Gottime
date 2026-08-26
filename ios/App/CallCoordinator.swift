@@ -122,8 +122,8 @@ final class CallCoordinator {
 
     // MARK: - Intents
 
-    func call(_ person: ConnectedPerson, durationSeconds: Int) async {
-        guard let session = try? await voiceService.startCall(to: person, durationSeconds: durationSeconds) else {
+    func call(_ person: ConnectedPerson, durationSeconds: Int, topic: String? = nil) async {
+        guard let session = try? await voiceService.startCall(to: person, durationSeconds: durationSeconds, topic: topic) else {
             // Phase 7 (Reliability) adds structured logging and a user-facing error state
             // here; for now a failed startCall simply never presents an active call.
             return

@@ -6,9 +6,10 @@ import GotTimeCore
 /// calls CallCoordinator.call(_:durationSeconds:).
 struct DurationPickerView: View {
     let person: ConnectedPerson
-    /// Reports the confirmed duration up to whichever view presents this sheet, rather than
-    /// starting the call directly from here — see the doc comment on `confirmCall()` for why.
-    let onConfirm: (Int) -> Void
+    /// Reports the confirmed duration and optional topic up to whichever view presents this
+    /// sheet, rather than starting the call directly from here — see the doc comment on
+    /// `confirmCall()` for why.
+    let onConfirm: (Int, String?) -> Void
 
     @Environment(\.appEnvironment) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -18,6 +19,10 @@ struct DurationPickerView: View {
     @State private var customSecondsText: String = ""
     @State private var isCustomSelected = false
     @State private var validationMessage: String?
+    /// Optional, caller-supplied context ("what's this about") — owner's own request: "type in
+    /// what the topic is and that pops up as well." Never required; a blank field means no
+    /// topic, matching request-call's own server-side sanitization.
+    @State private var topicText: String = ""
 
     /// `presetSeconds` (15s/30s/1min/3min) and `presetMinutes` (5/10/15/20/30 min) combined into
     /// one ordered, seconds-denominated list — the picker renders a single grid of chips rather
@@ -51,6 +56,8 @@ struct DurationPickerView: View {
             presetGrid
 
             customEntry
+
+            topicEntry
 
             if let validationMessage {
                 Text(validationMessage)
@@ -140,6 +147,21 @@ struct DurationPickerView: View {
         }
     }
 
+    /// Plain, optional single-line entry — no character counter or other pressure to fill it
+    /// in; a blank field is a completely normal, common case, not an error state.
+    private var topicEntry: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("What's this about? (optional)")
+                .font(.footnote)
+                .foregroundStyle(Color.gtTextSecondary)
+            TextField("e.g. Dinner tonight", text: $topicText)
+                .padding(12)
+                .background(Color.gtSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(.horizontal, 24)
+    }
+
     private func validate() {
         if customMinutesText.isEmpty && customSecondsText.isEmpty {
             validationMessage = nil
@@ -175,7 +197,8 @@ struct DurationPickerView: View {
     /// which SwiftUI guarantees fires only once the dismissal has genuinely completed.
     private func confirmCall() {
         guard let seconds = resolvedSeconds else { return }
-        onConfirm(seconds)
+        let trimmedTopic = topicText.trimmingCharacters(in: .whitespacesAndNewlines)
+        onConfirm(seconds, trimmedTopic.isEmpty ? nil : trimmedTopic)
         dismiss()
     }
 }

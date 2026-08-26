@@ -2385,3 +2385,102 @@ local compiler. Not yet confirmed on a real device — needs the same locked-pho
 build 23, this time specifically watching that the call actually ends (audio stops) on the
 answering phone when the timer reaches zero, and checking that History now shows the real calls
 just made.
+
+## Build 24 confirmed; owner asked for a live countdown and a call topic
+
+The owner confirmed build 24 (auto-hangup and real History both working), then asked for two
+more things: "the person receiving the phone call definitely needs to be able to know how much
+time is left" (a live ticking countdown, not just the static duration already shown), and a
+caller-typed topic — "Steven's calling. He needs 1 minute of my time, and it's about dinner
+tonight" — shown alongside name and duration.
+
+**Researched before writing anything, since this touches a real Apple platform constraint no
+amount of careful reading can substitute for.** A web search on `CXProvider.reportCall(with:
+updated:)` — the only mechanism that could update the lock-screen label live — turned up multiple
+long-standing Apple Developer Forum threads (e.g. "localizedCallerName is not updated in iOS
+17.2," "CallKit is not get updated on iPhone 14 with Dynamic Island," and a separate report that
+the same problem persists into iOS 18 on an already-*active* call, "currently being investigated"
+by Apple) describing exactly this: updating a `CXCallUpdate` on a call already in progress
+frequently fails to visibly refresh on real hardware, with no confirmed fix as of this writing.
+This isn't a guess or an assumption carried over from memory — it's the one piece of this
+project's entire CallKit integration where the *documented, current, real-world* behavior of the
+platform itself is genuinely uncertain, unlike everything else in `CallKitAdapter` (all of which
+was checked against Twilio's own quickstart and Apple's own API contracts and found reliable).
+
+Separately: does answering a CallKit call bring this app's own UI to the foreground, where the
+already-correct in-app countdown could be seen instead? Also researched, not assumed — the answer
+is conditional: video calls generally do; for audio-only VoIP specifically, "it's not guaranteed,"
+and explicitly "if the device can't be unlocked, then the call will be answered and stay in the
+lock screen UI" for the whole call. This matches exactly what the owner already reported after
+build 23 (answered from a locked phone, no countdown ever visible) — the phone likely never
+actually unlocked, so this app's own screen never had a chance to show anything.
+
+**Decision: build the live-updating label anyway, but document the real uncertainty rather than
+presenting it as guaranteed to work.** The owner explicitly asked for it, the cost of adding a
+once-per-second `reportCall(with:updated:)` call is low even if it turns out to not visibly
+refresh on the phones in question, and the fallback (the in-app countdown, once/if the phone is
+actually unlocked) already works correctly regardless. See `CallKitAdapter`'s own top-level
+comment for the same caveat, kept next to the code it describes.
+
+**Implementation.** `CallKitAdapter` now tracks each call with a small `TrackedCall` struct
+(callerName/topic/requestedDurationSeconds) keyed by callKitUUID, plus a reverse
+appCallUUID-to-callKitUUID map — needed because `VoiceEvent`s (which drive the countdown) carry
+this app's own `callUUID`, never CallKit's. A new `handle(_ event: VoiceEvent)` method starts a
+per-second ticking `Task` the moment a `.statusChanged` event reports `.connected`, computing
+remaining time from `CallTimer` anchored to the *first* locally-observed `connectedAt` (not any
+later server correction from `reconcileConnectedAt` — deliberately, so this stays consistent with
+`TwilioVoiceAdapter.scheduleAutoExpiry`'s own real hangup timer, which anchors the same way for
+the same reason: two independent timers racing from different anchors would be worse than one
+consistent anchor used by both). The label composes name + remaining time + topic (when present)
+into one string, e.g. "Thunder • 4:32 left • Dinner tonight," ticking every second until the call
+ends.
+
+**This surfaced — and fixed — a real, separate gap unrelated to the countdown itself.** For the
+ticking task to know when to *stop*, and for CallKit's own native call screen to actually dismiss
+promptly, `CallKitAdapter` needs to learn the instant a call ends for *any* reason, not just the
+reasons it initiated itself (a user tapping the native "End" button, which already calls
+`CXEndCallAction` and needs no further notification). Before this build, nothing told CallKit
+when: the caller hung up remotely, or — the new, more urgent case — `TwilioVoiceAdapter`'s own
+`scheduleAutoExpiry` (added in build 24) silently disconnected the call from underneath it. Without
+a fix, the recipient's lock screen would have kept showing a live "in call" screen with a frozen
+countdown, or worse, kept ringing, well after the real call had already ended. Fixed by giving
+`TwilioVoiceAdapter` a new `onVoiceEvent: ((VoiceEvent) -> Void)?` closure property, invoked
+synchronously from a new shared `emit(_:)` helper alongside every existing `continuation.yield`
+call. **Deliberately a closure, not a second `for await` loop over `events`**: `AsyncStream`
+delivers each element to whichever single consumer is currently awaiting `next()` — two
+independent consumers (`CallCoordinator` and `CallKitAdapter`) iterating the same stream would
+each receive a random subset of events, not both receiving every one, which would have been a
+subtle, hard-to-reproduce bug rather than a clean fix. `AppEnvironment.live()` wires
+`voiceAdapter.onVoiceEvent = { [weak callKitAdapter] event in callKitAdapter?.handle(event) }`
+once both are constructed — a closure specifically to avoid the circular-construction-order
+problem a stored reference in either direction would have created (`CallKitAdapter` already needs
+`TwilioVoiceAdapter` to exist first).
+
+`CallKitAdapter.endReportedCall` was made idempotent as part of this (guarded on a new
+`reportedCallKitUUIDs` set, separate from the caller-info `trackedCalls` map, since a call can be
+reported to CallKit — and later need ending on a lookup failure — before any of the rest of its
+info is ever known) — needed because a locally-initiated `CXEndCallAction` and the resulting
+`VoiceEvent` from `TwilioVoiceAdapter`'s own teardown can now both attempt to end the same
+CallKit-reported call; the second one now safely no-ops rather than double-reporting.
+
+**The topic feature**, by contrast, had no platform landmines — straightforward plumbing, all the
+way through: `call_sessions.topic` (migration 0012, nullable, 140-char CHECK constraint),
+`request-call`'s new `sanitizeTopic` (trims whitespace, truncates rather than rejecting an
+otherwise-valid call over an overlong string, normalizes blank/missing/non-string input to null —
+deliberately lenient, since a topic is a nice-to-have, not something worth failing a call request
+over), a new field on `CallSession` (default `nil`, so no existing construction call site needed
+touching), a new required parameter on `VoiceService.startCall`/`CallCoordinator.call` (threaded
+through explicitly at both real call sites — Swift's default-parameter-value mechanism doesn't
+apply through an `any VoiceService` existential, only through `CallCoordinator`'s own concrete
+type, so `MockVoiceServiceTests`' seven existing call sites needed no changes at all), a plain
+optional `TextField` on `DurationPickerView` ("What's this about? (optional)"), and finally
+`CallKitAdapter.updateReportedCall`'s composed label and `IncomingCallView`'s in-app screen, both
+showing it when present.
+
+Build 25. All 47 backend tests (44 plus 3 new topic-sanitization tests) pass; `deno fmt`/`deno
+lint` clean. Every touched file re-read in full for internal consistency, per this project's own
+established practice with no local compiler. Not yet confirmed on a real device — this build
+specifically needs to settle the one genuinely open question: does the lock-screen countdown
+actually tick, or does it sit frozen at its first value (in which case the in-app countdown, once
+the phone is unlocked, remains the reliable path) — plus the ordinary check that a typed topic
+shows up correctly and a blank one doesn't show anything at all.

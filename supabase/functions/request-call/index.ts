@@ -23,7 +23,12 @@ class SupabaseRequestCallClient implements RequestCallClient {
   }
 
   async createCallSession(
-    params: { callerId: string; recipientId: string; requestedDurationSeconds: number },
+    params: {
+      callerId: string;
+      recipientId: string;
+      requestedDurationSeconds: number;
+      topic: string | null;
+    },
   ): Promise<CallSessionRecord> {
     const admin = supabaseAdmin();
     const { data, error } = await admin
@@ -32,6 +37,7 @@ class SupabaseRequestCallClient implements RequestCallClient {
         caller_id: params.callerId,
         recipient_id: params.recipientId,
         requested_duration_seconds: params.requestedDurationSeconds,
+        topic: params.topic,
         // "outgoing", not the column's own "created" default -- CallStateMachine's transition
         // table (GotTimeCore, mirrored here) requires created->outgoing->ringing->connected in
         // order, but nothing ever performed that first transition: every session sat at
@@ -43,7 +49,7 @@ class SupabaseRequestCallClient implements RequestCallClient {
         status: "outgoing",
       })
       .select(
-        "id, call_uuid, caller_id, recipient_id, requested_duration_seconds, status, " +
+        "id, call_uuid, caller_id, recipient_id, requested_duration_seconds, topic, status, " +
           "initiated_at, created_at, updated_at",
       )
       .single();
@@ -54,6 +60,7 @@ class SupabaseRequestCallClient implements RequestCallClient {
       callerId: data.caller_id,
       recipientId: data.recipient_id,
       requestedDurationSeconds: data.requested_duration_seconds,
+      topic: data.topic,
       status: data.status,
       initiatedAt: data.initiated_at,
       createdAt: data.created_at,
@@ -78,7 +85,7 @@ export async function handler(req: Request): Promise<Response> {
   }
   const callerId = userData.user.id;
 
-  let body: { recipientId?: string; requestedDurationSeconds?: unknown };
+  let body: { recipientId?: string; requestedDurationSeconds?: unknown; topic?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -89,6 +96,7 @@ export async function handler(req: Request): Promise<Response> {
     callerId,
     recipientId: body.recipientId ?? "",
     requestedDurationSeconds: body.requestedDurationSeconds,
+    topic: body.topic,
   });
 
   if (!result.ok) {

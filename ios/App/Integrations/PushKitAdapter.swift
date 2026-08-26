@@ -234,15 +234,17 @@ extension PushKitAdapter: NotificationDelegate {
                 // (applyAndEmit), never on Twilio's own uuid fields. See DECISIONS.md.
                 self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
                 // Corrects the placeholder CallKit was given at report time, now that the
-                // caller's real name and the session's requested duration are actually known --
-                // composed into one localizedCallerName (e.g. "Thunder • 10 min"), per the
-                // owner's own explicit requirement that the lock screen show the requested
-                // duration, not just who's calling.
+                // caller's real name, requested duration, and optional topic are actually known
+                // -- composed into one localizedCallerName (e.g. "Thunder • 10 min • Dinner
+                // tonight"), per the owner's own explicit requirements that the lock screen show
+                // the requested duration and, when the caller provided one, what the call is
+                // about.
                 self.callKitAdapter.updateReportedCall(
                     callKitUUID: callInvite.uuid,
                     appCallUUID: context.1.callUUID,
                     callerName: context.0.firstName ?? "Unknown",
-                    requestedDurationSeconds: context.1.requestedDurationSeconds
+                    requestedDurationSeconds: context.1.requestedDurationSeconds,
+                    topic: context.1.topic
                 )
                 await self.reportIncomingPushStatus(status: "delivered_to_coordinator", detail: nil)
             } catch {
@@ -277,6 +279,7 @@ private struct CallSessionTableRow: Decodable {
     let callerId: UUID
     let recipientId: UUID
     let requestedDurationSeconds: Int
+    let topic: String?
     let status: CallStatus
     let initiatedAt: Date
     let createdAt: Date
@@ -288,6 +291,7 @@ private struct CallSessionTableRow: Decodable {
         case callerId = "caller_id"
         case recipientId = "recipient_id"
         case requestedDurationSeconds = "requested_duration_seconds"
+        case topic
         case status
         case initiatedAt = "initiated_at"
         case createdAt = "created_at"
@@ -301,6 +305,7 @@ private struct CallSessionTableRow: Decodable {
             callerId: callerId,
             recipientId: recipientId,
             requestedDurationSeconds: requestedDurationSeconds,
+            topic: topic,
             initiatedAt: initiatedAt,
             status: status,
             createdAt: createdAt,

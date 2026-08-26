@@ -67,7 +67,7 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
     // MARK: - VoiceService
 
     @discardableResult
-    public func startCall(to recipient: ConnectedPerson, durationSeconds: Int) async throws -> CallSession {
+    public func startCall(to recipient: ConnectedPerson, durationSeconds: Int, topic: String? = nil) async throws -> CallSession {
         lock.lock()
         profileDirectory[recipient.id] = recipient.profile
         lock.unlock()
@@ -86,6 +86,7 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
             callerId: selfUserId,
             recipientId: recipient.id,
             requestedDurationSeconds: effectiveDuration,
+            topic: topic,
             initiatedAt: now,
             status: .created,
             createdAt: now,

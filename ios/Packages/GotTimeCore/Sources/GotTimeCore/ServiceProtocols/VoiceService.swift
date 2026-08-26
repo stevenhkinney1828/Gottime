@@ -31,9 +31,12 @@ public protocol VoiceService {
 
     /// Caller-initiated. `durationSeconds` must already be validated by DurationPolicy —
     /// this method does not re-validate it, matching the real implementation where duration
-    /// authorization actually happens server-side (spec section 13).
+    /// authorization actually happens server-side (spec section 13). `topic` is optional,
+    /// caller-supplied context ("what's this about") shown to the recipient alongside name and
+    /// duration — sanitized server-side (trimmed, truncated, blank normalized to nil), never
+    /// re-validated here.
     @discardableResult
-    func startCall(to recipient: ConnectedPerson, durationSeconds: Int) async throws -> CallSession
+    func startCall(to recipient: ConnectedPerson, durationSeconds: Int, topic: String?) async throws -> CallSession
 
     /// Recipient action: accept an incoming call.
     func answer(callUUID: UUID) async throws
