@@ -2302,3 +2302,86 @@ identical at runtime; the type-checker rejects it anyway, since a property initi
 evaluated before `self`'s metatype is considered fully established, regardless of finality. Fixed
 by calling `GotTimeAppDelegate.resolvedEnvironment()` explicitly instead of through `Self`. No
 other errors appeared in the same CI run. Build 23.
+
+## Build 23's real device test: CallKit itself worked, but it surfaced two real, unrelated gaps
+
+The owner tested build 23 on a real locked phone (their wife's) for the first time: **answering
+from the lock screen via CallKit's native UI worked** — the actual core deliverable of Phase 5.
+But the same test surfaced three separate findings, only one of which was actually about CallKit:
+
+1. No visible countdown on the CallKit-answered side.
+2. When the timer reached zero, the caller's own screen moved on to its post-call summary, but
+   the *real phone call* on the recipient's side (answered via CallKit from the lock screen) kept
+   running — audio never stopped.
+3. History showed only placeholder-looking entries, not anything from the calls just made.
+
+**Finding 2 was the serious one, and root-caused by grep, not guessed.** Searching this codebase
+for `.timedOut` (the `CallStatus` case that represents "reached its full duration") turned up
+exactly one producer: `MockVoiceService.scheduleAutoExpiry`. Nothing in `TwilioVoiceAdapter` — the
+real adapter — had ever produced it. That means the "the call auto-ended at zero, so that worked
+too" the owner reported back in Phase 4 testing (build 19/20) was never actually driven by any
+real enforcement mechanism in this codebase; it's unclear exactly what ended that earlier test
+call (most likely the caller tapping End around the same moment, or Twilio's own
+`<Dial timeLimit="...">` on the dialed leg — `twiml-voice/logic.ts` does set this — happening to
+line up), but this test proves conclusively that neither is a *reliable* mechanism: the caller's
+device showed the summary screen, and the actual Twilio call, on the actual phone that answered
+it, did not hang up.
+
+This matters more, not less, because of CallKit: a CallKit-answered call on a locked phone has no
+SwiftUI view of this app's own on screen at all (Apple's native call UI owns that surface until
+the user unlocks) — so any enforcement mechanism that depended on a *view* being rendered (a
+`.onChange`, a per-screen timer) could never have worked for exactly this scenario, the one Phase
+5 exists for. The real fix has to live in `TwilioVoiceAdapter` itself, independent of any UI.
+
+**Fix**: `applyAndEmit`'s existing `if status == .connected` block (which already schedules
+`reconcileConnectedAt`) now also calls a new `scheduleAutoExpiry(callUUID:connectedAt:
+requestedDurationSeconds:)` — computes `CallTimer(connectedAt:requestedDurationSeconds:)
+.remainingSeconds(at: .now)`, sleeps that long, then calls a new `disconnectForTimeout(callUUID:)`.
+This mirrors `MockVoiceService.scheduleAutoExpiry` deliberately — that function's own doc comment
+already said it "mirrors the real system's primary enforcement layer," a promise this codebase
+had never actually kept until now. `disconnectForTimeout` applies `.timedOut` then `.completed`
+locally (via the same `applyAndEmit` choke point, in that order) *before* calling
+`call.disconnect()` — so that when Twilio's own `callDidDisconnect` fires moments later,
+`activeSession` is already terminal and `CallStateMachine` correctly rejects
+`callDidDisconnect`'s own now-irrelevant guess at an outcome as an invalid transition, rather than
+the two racing to double-report how the call ended. Because this lives in `applyAndEmit` — the
+same choke point both the caller's and the recipient's own `TwilioVoiceAdapter` instance run
+independently — each participant's own device now enforces its own hangup at zero, with zero
+dependency on whether any view is on screen. `<Dial timeLimit>` remains in place as a genuine
+secondary layer, but is no longer assumed to be sufficient on its own — see the pre-existing
+three-layer design in the original build plan; this makes the client-side layer, the primary one,
+actually real for the first time.
+
+**Finding 1 (no visible countdown while locked) is a real platform constraint, not (yet) a bug to
+fix**: Apple's own native CallKit call screen — the only thing visible on a locked phone until the
+user unlocks — has no built-in "time remaining" display; it shows elapsed call duration, the same
+as the standard Phone app, and there is no supported way to replace that with a countdown. The
+`localizedCallerName` label (already composed as "Name • Duration" at ring time) *could* be
+refreshed periodically post-connection via `provider.reportCall(with:updated:)` to show a live
+countdown even pre-unlock, but that's a real, separate feature with its own design questions
+(update cadence, whether replacing the caller's name text with a ticking number is even wanted) —
+not implemented this round; left for the owner to weigh in on rather than guessed at. The in-app
+countdown (`ActiveCallView`/`CountdownView`) itself needs no fix — it was already correctly wired
+to `CallCoordinator.remainingSeconds`, which is computed fresh from `connectedAt` the moment that
+gets set, regardless of how the call was answered.
+
+**Finding 3 (History showing placeholder data) was a known, already-documented scoping gap, not a
+new bug**: `CallHistoryService` had been the one service deliberately left on `MockEnvironment`
+since Phase 1 while the much harder voice/CallKit work took priority (see
+`AppEnvironment.swift`'s own doc comment, and `BUILD_STATUS.md`'s Phase 4/5 entries, both of which
+already said this plainly) — so every History screen the owner has seen so far was always the
+mock's seeded data, never anything from a real call. Fixed now that voice + CallKit are both
+working end to end and there's real data worth showing: added `SupabaseCallHistoryAdapter`
+(`ios/App/Integrations/`), reading `call_sessions` directly (RLS already scopes results to the
+signed-in user, so no additional filter is applied — same reasoning as
+`SupabaseConnectionAdapter`), resolving each entry's other-participant profile the same
+batch-fetch way `SupabaseConnectionAdapter.fetchConnections` already does. Wired into
+`AppEnvironment.live()` in place of `mockEnv.callHistoryService`, which made the `mockEnv` local
+in that function unused — removed entirely rather than left as dead code.
+
+Build 24. All 44 backend tests unaffected (no backend changes this round). Every file re-read in
+full after writing, for internal consistency, per this project's own established practice with no
+local compiler. Not yet confirmed on a real device — needs the same locked-phone/CallKit test as
+build 23, this time specifically watching that the call actually ends (audio stops) on the
+answering phone when the timer reaches zero, and checking that History now shows the real calls
+just made.

@@ -404,9 +404,49 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         if updated.status.isTerminal {
             continuation.yield(.callEnded(callUUID: updated.callUUID))
         }
-        if status == .connected {
+        if status == .connected, let connectedAt = updated.connectedAt {
             Task { [weak self] in await self?.reconcileConnectedAt(callUUID: updated.callUUID) }
+            scheduleAutoExpiry(callUUID: updated.callUUID, connectedAt: connectedAt, requestedDurationSeconds: updated.requestedDurationSeconds)
         }
+    }
+
+    /// The primary duration-enforcement layer (spec section 7: "the caller is responsible for
+    /// disconnecting at zero" — see `CallTimer`'s own doc comment). Build 23's real two-device
+    /// CallKit test found this had never actually been built for this adapter at all: the
+    /// caller's own screen moved on to its post-call summary when the countdown reached zero,
+    /// but the *recipient's* real phone call (answered via CallKit from a locked screen) kept
+    /// running indefinitely. Confirmed by grep, not guessed — `.timedOut` was only ever produced
+    /// by `MockVoiceService`'s `scheduleAutoExpiry`, which this mirrors exactly; nothing in this
+    /// file ever called it. Twilio's own `<Dial timeLimit>` (`twiml-voice/logic.ts`) was assumed
+    /// to be a working backstop, but the same real test proved it doesn't reliably end the call
+    /// either — this is now the one enforcement layer actually verified to run, not a backstop.
+    private func scheduleAutoExpiry(callUUID: UUID, connectedAt: Date, requestedDurationSeconds: Int) {
+        let timer = CallTimer(connectedAt: connectedAt, requestedDurationSeconds: requestedDurationSeconds)
+        let remaining = timer.remainingSeconds(at: .now)
+        Task { [weak self] in
+            guard let self else { return }
+            if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+            }
+            self.disconnectForTimeout(callUUID: callUUID)
+        }
+    }
+
+    /// Applies both local transitions (`.timedOut` then `.completed`, mirroring
+    /// `MockVoiceService`) *before* calling `call.disconnect()` — deliberately in this order, so
+    /// that by the time Twilio's own `callDidDisconnect` delegate callback fires moments later,
+    /// `activeSession` is already terminal and `CallStateMachine` correctly rejects
+    /// `callDidDisconnect`'s own (now-irrelevant) guess at an outcome as an invalid transition
+    /// from a terminal state, rather than the two racing to double-report this call's ending.
+    private func disconnectForTimeout(callUUID: UUID) {
+        lock.lock()
+        let call = activeCall
+        let matches = activeSession?.callUUID == callUUID
+        lock.unlock()
+        guard let call, matches else { return }
+        applyAndEmit(.timedOut, for: call)
+        applyAndEmit(.completed, for: call)
+        call.disconnect()
     }
 
     /// The `connectedAt` stamped above is read from this device's own clock at the exact

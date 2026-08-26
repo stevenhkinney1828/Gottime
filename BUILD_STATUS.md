@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, auto-end at zero, arbitrary durations; Phase 6's core mechanism rode along for free. Full CallKit lock-screen calling is now built (build 23, after build 22 failed CI on a real compile error) and awaiting its real-device test — see bottom)**
+**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24, awaiting its real-device test — see bottom)**
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -126,19 +126,39 @@ work directly from the lock screen.
 - ✅ **`CallCoordinator` made properly reactive** to CallKit's native Answer path, and a related
   gap fixed as a side effect: a cancelled/declined incoming call now always clears correctly,
   even when never promoted to an active call.
-- Build 23 (fixing build 22's compile error), both CI jobs confirmed green (Simulator
-  build/test + TestFlight sign & upload). **Not yet
-  tested on a real device at all** — this needs a specifically deliberate test: lock the phone
-  (or fully force-quit the app) and have someone else call, to check (a) the lock screen shows
-  "Name • Duration," (b) native Answer/Decline both work, (c) audio works for a CallKit-answered
-  call, and (d) a real decline vs. a real no-answer now show as genuinely distinct outcomes.
+- ✅ **Build 23 confirmed on a real locked phone**: lock-screen answer via CallKit's native UI
+  worked — the actual core deliverable of this phase. The same test surfaced two real gaps, both
+  unrelated to CallKit itself and both fixed in build 24 (see Phase 6 below for the serious one):
+  no visible countdown while the phone stayed locked (a real platform constraint, not a bug —
+  Apple's own native call screen has no custom "time remaining" display; see DECISIONS.md for the
+  possible live-label workaround, not built yet, left as an open question), and the call answered
+  from the lock screen never actually ending when the timer reached zero.
+- 🔄 **Not yet confirmed**: whether native Answer/Decline both work, and whether declined vs.
+  no-answer now show as genuinely distinct History outcomes (build 21's own fix) — needs the same
+  deliberate real-call testing as build 24 below.
 
-## Phase 6 — Timer enforcement ✅ core mechanism confirmed; 🔄 backstop layer not built
-The client-side disconnect-at-zero (spec section 7's actual requirement) is confirmed working
-on real devices, riding along for free once Phase 4's signaling was fixed. Not yet built: the
-`pg_cron`/`pg_net` sweep backstop (a defense-in-depth safety net for a call that somehow slips
-past the client's own cutoff — not something a normal test would ever hit, but part of the
-original three-layer design). Low priority relative to Phase 5.
+## Phase 6 — Timer enforcement 🔄 core mechanism actually just built for real
+**Correction to this section's previous claim**: the client-side disconnect-at-zero was
+previously believed confirmed working on real devices "for free" once Phase 4's signaling was
+fixed. Build 23's real CallKit test proved that wrong — grepping the codebase for `.timedOut`
+(the status this mechanism produces) found it was only ever implemented in `MockVoiceService`;
+`TwilioVoiceAdapter`, the real adapter, never once produced it. Whatever ended that earlier
+Phase 4 test call was not this mechanism. Fixed in build 24: `TwilioVoiceAdapter` now schedules
+its own local expiry from `connectedAt` (mirroring `MockVoiceService.scheduleAutoExpiry` exactly)
+and genuinely calls `call.disconnect()` at zero — runs independently on both the caller's and the
+recipient's own device, with no dependency on any view being on screen, which is what actually
+matters for a CallKit-answered, locked-phone call. See DECISIONS.md for the full root-cause
+account. Not yet built: the `pg_cron`/`pg_net` sweep backstop (defense-in-depth for a call that
+somehow slips past the client's own cutoff — part of the original three-layer design, low
+priority relative to confirming the layer above actually works on a real device now).
+
+## Also fixed in build 24: History was showing mock data, not real calls
+`callHistoryService` had been deliberately left on `MockEnvironment` since Phase 1 while the
+harder voice/CallKit work took priority (documented plainly in `AppEnvironment.swift`'s own doc
+comment) — every History screen the owner has seen so far was always the mock's seeded
+placeholder data, never a real call. Not a new bug, just a gap whose time had come now that real
+calls exist to show. Added `SupabaseCallHistoryAdapter`, reading `call_sessions` directly (RLS
+already scopes results to the signed-in user). Not yet confirmed on a real device.
 
 ## Phase 7 — Reliability
 ⬜ Not started.

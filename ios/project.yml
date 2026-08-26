@@ -184,8 +184,22 @@ settings:
     # doesn't type-check; Swift disallows a covariant `Self` reference in a stored property
     # initializer even on a `final` class. Fixed by naming the type explicitly
     # (`GotTimeAppDelegate.resolvedEnvironment()`) -- no other errors in the same CI run. See
-    # DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "23"
+    # DECISIONS.md. 23->24: build 23's real two-device test (locked phone, answered via CallKit)
+    # surfaced two real gaps, neither related to CallKit itself. (1) The call answered from the
+    # lock screen never ended when the timer reached zero, even though the caller's own screen
+    # correctly moved on -- confirmed by grep that TwilioVoiceAdapter never once produced
+    # `.timedOut`; the "confirmed working" auto-disconnect from Phase 4 testing was never actually
+    # built for the real adapter, only for MockVoiceService. Fixed: TwilioVoiceAdapter now
+    # schedules its own local expiry from `connectedAt` the same way MockVoiceService always did,
+    # and genuinely calls `call.disconnect()` at zero -- runs on both participants' own devices
+    # independently, with no dependency on any view being on screen, so it works identically for a
+    # locked/CallKit-answered call. (2) History was still showing GotTimeMocks' seeded placeholder
+    # entries -- `callHistoryService` was the one service deliberately left mocked since Phase 1
+    # while the harder voice/CallKit work took priority (see AppEnvironment.swift's own doc
+    # comment); added a real `SupabaseCallHistoryAdapter` reading directly from `call_sessions`,
+    # exactly as `CallHistoryService`'s protocol doc comment always said a real implementation
+    # would. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "24"
 
 packages:
   GotTimeCore:
