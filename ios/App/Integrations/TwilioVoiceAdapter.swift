@@ -62,7 +62,17 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
         let connectOptions = ConnectOptions(accessToken: token) { builder in
             builder.params = ["callSessionId": session.id.uuidString]
-            builder.uuid = session.callUUID
+            // Deliberately NOT setting builder.uuid. Confirmed directly from Twilio's own
+            // documentation (not guessed): setting ConnectOptions.uuid/AcceptOptions.uuid tells
+            // the SDK "this app manages CallKit's own audio-session activation" -- the SDK then
+            // never automatically enables the audio device, since that's normally done from
+            // CXProviderDelegate.provider(_:didActivate:). This project doesn't use CallKit, so
+            // setting this was silently breaking real audio in both directions the entire time
+            // it was present, even after full two-way signaling started working. Leaving it nil
+            // makes the SDK enable the audio device itself. Because `Call.uuid` is documented as
+            // genuinely optional and has no reason to relate to this app's own call_uuid once
+            // it's no longer forced, matching below no longer reads it at all -- see
+            // applyAndEmit/clearIfActive, and DECISIONS.md.
         }
         let call = TwilioVoiceSDK.connect(options: connectOptions, delegate: self)
 
@@ -78,9 +88,9 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         guard let invite = pendingInviteMatching(callUUID) else {
             throw TwilioVoiceAdapterError.noPendingInvite
         }
-        let acceptOptions = AcceptOptions(callInvite: invite) { builder in
-            builder.uuid = invite.uuid
-        }
+        // Deliberately NOT setting builder.uuid -- see startCall's own comment; this was
+        // silently disabling automatic audio device activation on the recipient's side too.
+        let acceptOptions = AcceptOptions(callInvite: invite) { _ in }
         let call = invite.accept(options: acceptOptions, delegate: self)
 
         lock.lock()
@@ -178,14 +188,19 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// edge-case list territory), not something fixable at this layer alone.
     public func handleCancelledCallInvite(callSid: String) {
         lock.lock()
-        let matchedUUID = pendingInvite?.callSid == callSid ? pendingInvite?.uuid : nil
-        if matchedUUID != nil {
+        // Matched by callSid (Twilio's own call identifier, reliable and unrelated to .uuid)
+        // but emits pendingSession?.callUUID -- this app's own value, matching what
+        // CallCoordinator's incomingCall.session.callUUID actually is. Emitting
+        // pendingInvite?.uuid here instead (as this did before the audio fix) would silently
+        // mismatch, since that's no longer forced to relate to anything CallCoordinator holds.
+        let matchedCallUUID: UUID? = (pendingInvite?.callSid == callSid) ? pendingSession?.callUUID : nil
+        if matchedCallUUID != nil {
             pendingInvite = nil
             pendingSession = nil
         }
         lock.unlock()
-        if let matchedUUID {
-            continuation.yield(.callEnded(callUUID: matchedUUID))
+        if let matchedCallUUID {
+            continuation.yield(.callEnded(callUUID: matchedCallUUID))
         }
     }
 
@@ -288,32 +303,35 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         return nil
     }
 
-    /// Instrumented after build 15's real retest reported nothing at all on the recipient's
-    /// device — not even one of `applyAndEmit`'s four outcomes — which means the gap is earlier
-    /// than that: possibly right here, if `pendingInvite?.uuid` doesn't actually equal the
-    /// `callUUID` `CallCoordinator` passes in (`incoming.session.callUUID`, this app's own
-    /// `call_uuid` — a value Twilio's SDK has no way to know about when it mints `CallInvite`'s
-    /// own `uuid` on this device). If that's the mismatch, `answer()`/`decline()` throw
-    /// immediately and `invite.accept()`/`.reject()` are never reached at all — a theory floated
-    /// and provisionally set aside earlier for lack of direct evidence; this settles it either
-    /// way. See DECISIONS.md and migration 0010.
+    /// Matches against `pendingSession?.callUUID` (this app's own `call_uuid`) rather than
+    /// `pendingInvite?.uuid` (Twilio's own SDK-local id) — confirmed via a real device test
+    /// (build 16) that those two are genuinely different values, which made every `answer()`/
+    /// `decline()` throw before `invite.accept()`/`.reject()` was ever reached. Comparing against
+    /// our own app-level value instead, which `CallCoordinator` already threads through
+    /// unchanged from the same `pendingSession` this method reads, makes this match correct by
+    /// construction rather than by coincidence. See DECISIONS.md.
     private func pendingInviteMatching(_ callUUID: UUID) -> CallInvite? {
         lock.lock()
         let invite = pendingInvite
+        let session = pendingSession
         lock.unlock()
-        guard invite?.uuid == callUUID else {
-            report(status: "invite_not_pending", detail: "requested=\(callUUID) pendingInviteUUID=\(invite?.uuid.uuidString ?? "nil")")
+        guard session?.callUUID == callUUID else {
+            report(status: "invite_not_pending", detail: "requested=\(callUUID) pendingSessionCallUUID=\(session?.callUUID.uuidString ?? "nil")")
             return nil
         }
         report(status: "invite_matched", detail: "uuid=\(callUUID)")
         return invite
     }
 
+    /// Matches against `activeSession?.callUUID` (this app's own value) rather than
+    /// `activeCall?.uuid` (Twilio's own, now genuinely optional and no longer forced — see
+    /// `startCall`'s comment) — same reasoning as `pendingInviteMatching` above.
     private func disconnectActiveCall(matching callUUID: UUID) throws {
         lock.lock()
         let call = activeCall
+        let matches = activeSession?.callUUID == callUUID
         lock.unlock()
-        guard let call, call.uuid == callUUID else {
+        guard let call, matches else {
             throw TwilioVoiceAdapterError.noActiveCall
         }
         call.disconnect()
@@ -323,16 +341,23 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// the single choke point every delegate callback below funnels through, so GotTimeCore's
     /// own transition rules (not ad hoc logic here) decide what's valid, exactly like
     /// `MockVoiceService.tryApply` does for the mocked path.
-    private func applyAndEmit(_ status: CallStatus, callUUID: UUID) {
+    ///
+    /// Matches by object identity (`activeCall === call`), not by any UUID field on `call` —
+    /// `Call.uuid`/`CallInvite.uuid` are documented as genuinely optional and, once no longer
+    /// forced via ConnectOptions/AcceptOptions.uuid (see `startCall`'s comment, required to fix
+    /// real audio), have no guaranteed value at all. Since this adapter only ever tracks one
+    /// `activeCall` at a time by design, identity is a strictly more reliable check than a UUID
+    /// that might not even be populated.
+    private func applyAndEmit(_ status: CallStatus, for call: Call) {
         lock.lock()
-        guard let session = activeSession else {
+        guard let activeCallRef = activeCall, activeCallRef === call else {
             lock.unlock()
-            report(status: "no_active_session", detail: "attempted=\(status)")
+            report(status: "no_active_session", detail: "attempted=\(status) (call is not the tracked activeCall)")
             return
         }
-        guard session.callUUID == callUUID else {
+        guard let session = activeSession else {
             lock.unlock()
-            report(status: "uuid_mismatch", detail: "attempted=\(status) callUUID=\(callUUID) sessionCallUUID=\(session.callUUID)")
+            report(status: "no_active_session", detail: "attempted=\(status) (activeCall set, activeSession nil)")
             return
         }
         guard let updated = try? CallStateMachine.apply(status, to: session, at: .now) else {
@@ -345,10 +370,10 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
         report(status: "applied", detail: "to=\(status)")
         continuation.yield(.statusChanged(session: updated))
         if updated.status.isTerminal {
-            continuation.yield(.callEnded(callUUID: callUUID))
+            continuation.yield(.callEnded(callUUID: updated.callUUID))
         }
         if status == .connected {
-            Task { [weak self] in await self?.reconcileConnectedAt(callUUID: callUUID) }
+            Task { [weak self] in await self?.reconcileConnectedAt(callUUID: updated.callUUID) }
         }
     }
 
@@ -361,17 +386,21 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// theirs. Twilio's own "in-progress" status callback records one single, server-side
     /// `connected_at` (see twilio-status-callback/logic.ts — its "answered"/"in-progress"
     /// naming bug meant this had never actually been set, for any call, before this same build)
-    /// that both devices can fetch and agree on. Retries briefly since this fetch is racing an
-    /// independent webhook delivery this device has no way to await directly; if it never
-    /// lands, the locally-stamped time stands rather than leaving the countdown stuck.
+    /// that both devices can fetch and agree on. Retries for up to a minute since this fetch is
+    /// racing an independent webhook delivery this device has no way to await directly — the
+    /// first version of this retried for only 2 seconds total, which is far shorter than a
+    /// realistic time-to-answer and left the desync just as visible as before whenever the
+    /// recipient took longer than that to pick up (which is the normal case, not an edge case).
+    /// A minute comfortably covers any realistic ring/answer window; if it never lands even
+    /// then, the locally-stamped time stands rather than leaving the countdown stuck.
     private func reconcileConnectedAt(callUUID: UUID) async {
         struct Row: Decodable {
             let connectedAt: Date?
             enum CodingKeys: String, CodingKey { case connectedAt = "connected_at" }
         }
         guard let session = currentSession(matching: callUUID) else { return }
-        for _ in 0..<5 {
-            try? await Task.sleep(for: .milliseconds(400))
+        for _ in 0..<60 {
+            try? await Task.sleep(for: .seconds(1))
             guard
                 let row: Row = try? await client.from("call_sessions")
                     .select("connected_at")
@@ -432,23 +461,19 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
 
 extension TwilioVoiceAdapter: CallDelegate {
     public func callDidStartRinging(call: Call) {
-        guard let uuid = call.uuid else { return }
-        applyAndEmit(.ringing, callUUID: uuid)
+        applyAndEmit(.ringing, for: call)
     }
 
     public func callDidConnect(call: Call) {
-        guard let uuid = call.uuid else { return }
-        applyAndEmit(.connected, callUUID: uuid)
+        applyAndEmit(.connected, for: call)
     }
 
     public func callDidFailToConnect(call: Call, error: Error) {
-        guard let uuid = call.uuid else { return }
-        applyAndEmit(.failed, callUUID: uuid)
+        applyAndEmit(.failed, for: call)
         clearIfActive(call)
     }
 
     public func callDidDisconnect(call: Call, error: Error?) {
-        guard let uuid = call.uuid else { return }
         lock.lock()
         let wasConnected = activeSession?.status == .connected
         lock.unlock()
@@ -459,16 +484,17 @@ extension TwilioVoiceAdapter: CallDelegate {
         // duration-enforcement design, and CallStateMachine simply rejects an invalid
         // .endedEarly attempt on a session this adapter itself already marked .timedOut via
         // that mechanism, so nothing here can incorrectly overwrite it.
-        applyAndEmit(error != nil ? .failed : (wasConnected ? .endedEarly : .failed), callUUID: uuid)
+        applyAndEmit(error != nil ? .failed : (wasConnected ? .endedEarly : .failed), for: call)
         clearIfActive(call)
     }
 
     public func callIsReconnecting(call: Call, error: Error) {}
     public func callDidReconnect(call: Call) {}
 
+    /// Identity, not `.uuid` — see `applyAndEmit`'s own comment.
     private func clearIfActive(_ call: Call) {
         lock.lock()
-        if activeCall?.uuid == call.uuid {
+        if activeCall === call {
             activeCall = nil
             activeSession = nil
         }

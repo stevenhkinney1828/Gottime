@@ -217,36 +217,18 @@ extension PushKitAdapter: NotificationDelegate {
             do {
                 let context = try await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId)
                 await self.reportIncomingPushStatus(status: "context_fetched", detail: nil)
-                // Confirmed via build 16's real diagnostic (not guessed): callInvite.uuid is a
-                // value Twilio's SDK generates fresh on THIS device -- it has no relationship to
-                // call_sessions.call_uuid (a value only ever chosen by the CALLER's own device,
-                // via ConnectOptions.uuid on the outgoing side). Every downstream match on the
-                // recipient's device (TwilioVoiceAdapter's pendingInviteMatching/applyAndEmit/
-                // disconnectActiveCall) compares against THIS device's own local `callUUID`, so
-                // the session handed to CallCoordinator must carry callInvite.uuid, not the
-                // server's original call_uuid -- otherwise answer()/decline() throw before ever
-                // reaching Twilio, and activeCall never gets set, so cancel/end do nothing
-                // either. Safe to override: callUUID is a purely local SDK-matching field,
-                // never sent to the server or shown in any UI (server correlation always uses
-                // session.id, e.g. the callSessionId param above) -- see DECISIONS.md.
-                let session = context.1
-                let localSession = CallSession(
-                    id: session.id,
-                    callUUID: callInvite.uuid,
-                    callerId: session.callerId,
-                    recipientId: session.recipientId,
-                    requestedDurationSeconds: session.requestedDurationSeconds,
-                    initiatedAt: session.initiatedAt,
-                    ringingAt: session.ringingAt,
-                    connectedAt: session.connectedAt,
-                    endedAt: session.endedAt,
-                    actualDurationSeconds: session.actualDurationSeconds,
-                    providerCallSid: session.providerCallSid,
-                    status: session.status,
-                    createdAt: session.createdAt,
-                    updatedAt: session.updatedAt
-                )
-                self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: localSession)
+                // Previously overrode session.callUUID with callInvite.uuid here (build 17),
+                // needed at the time because TwilioVoiceAdapter matched against Twilio's own
+                // uuid fields. That's no longer true: fixing real audio required no longer
+                // forcing ConnectOptions.uuid/AcceptOptions.uuid (setting them disables the
+                // SDK's automatic audio-device activation -- confirmed via Twilio's own docs),
+                // and Call.uuid/CallInvite.uuid are documented as genuinely optional once that's
+                // no longer forced. TwilioVoiceAdapter now matches entirely on this app's own
+                // call_uuid (pendingInviteMatching/disconnectActiveCall) and Call object
+                // identity (applyAndEmit), so passing the session through unmodified is both
+                // simpler and no longer dependent on a Twilio-internal field at all. See
+                // DECISIONS.md.
+                self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
                 await self.reportIncomingPushStatus(status: "delivered_to_coordinator", detail: nil)
             } catch {
                 await self.reportIncomingPushStatus(status: "context_fetch_failed", detail: "\(error)")

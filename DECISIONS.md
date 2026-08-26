@@ -2028,3 +2028,85 @@ Build 18. All 44 backend tests pass (updated for the new duration floor and the 
 event name). Not yet confirmed on a real device — in particular, `reconcileConnectedAt`'s retry
 timing and the audio permission fix are both new enough to warrant a real test before treating
 either as settled.
+
+## Build 18 retested: mic permission alone didn't fix audio, and the timer still desynced — both traced to their real causes, not guessed at again
+
+The owner retested build 18. Both issues persisted: still no audio in either direction, even
+after explicitly granting the microphone permission prompt on both phones; the caller's
+countdown still started immediately, unaffected by the recipient's actual answer time.
+
+**Audio: verified against Twilio's own documentation before touching code again**, rather than
+guess a second time after the permission fix alone didn't work. Search directly confirmed the
+real mechanism: *"If you are not using CallKit in your app, you must not set
+ConnectOptions.uuid or AcceptOptions.uuid while making or answering a call. The Voice SDK will
+enable the audio device for you when the uuid is nil."* This project has forced both of those
+since Phase 4 (`builder.uuid = session.callUUID` in `startCall`, `builder.uuid = invite.uuid` in
+`answer`) — originally so Twilio's own `Call`/`CallInvite` uuid would agree with this app's own
+`call_uuid` for local matching purposes, with no idea this also happened to be *the exact signal
+that tells the SDK "this app manages CallKit's own audio-session activation."* Since this
+project has never implemented CallKit's audio-activation delegate methods (`provider(_:
+didActivate:)`/`didDeactivate:`) — deliberately, CallKit integration is still deferred — the
+SDK's own automatic audio-device activation was silently disabled this entire time, on both the
+caller's and recipient's side, regardless of microphone permission being granted. This explains
+why granting the permission didn't help: the permission was never the blocker: the audio device
+itself was never being turned on at all.
+
+**Also checked, not assumed, before changing anything**: whether the resulting accepted/
+connected `Call`'s own `.uuid` is still safe to rely on once no longer forced. A Twilio SDK
+migration guide confirms *"The `uuid` property of `TVOCall` is now optional"* — meaning once
+`ConnectOptions.uuid`/`AcceptOptions.uuid` are left nil, `Call.uuid` may simply stay nil
+indefinitely, not just briefly-nil-then-populated as the existing `guard let uuid = call.uuid
+else { return }` code defensively assumed. Continuing to match `CallDelegate` callbacks against
+`call.uuid` after removing the forced assignment would have meant every callback silently
+no-op'ing forever (`call.uuid` nil, guard always failing) — a different but equally complete
+break, not a partial one.
+
+**Fix: stopped forcing `ConnectOptions.uuid`/`AcceptOptions.uuid` entirely, and redesigned every
+local matching path in `TwilioVoiceAdapter` to never depend on Twilio's own uuid fields again:**
+- `applyAndEmit` (the single choke point every `CallDelegate` callback funnels through) now
+  matches by **Call object identity** (`activeCall === call`), not any UUID field — strictly
+  more reliable than a field that may not even be populated, and correct given this adapter only
+  ever tracks one `activeCall` at a time by design.
+- `pendingInviteMatching` (used by both `answer`/`decline`) now compares against
+  `pendingSession?.callUUID` — this app's own value, which `CallCoordinator` already threads
+  through unchanged — instead of `pendingInvite?.uuid`. This is the exact field that caused the
+  build-16 UUID-mismatch bug in the first place; comparing two values this app controls end to
+  end makes the match correct by construction, not by coincidence of what Twilio happens to
+  assign.
+- `disconnectActiveCall` (used by `cancel`/`endEarly`) now compares against
+  `activeSession?.callUUID` instead of `activeCall?.uuid`, same reasoning.
+- `clearIfActive` now compares by object identity instead of `.uuid` equality.
+- `handleCancelledCallInvite` still matches the *incoming* cancellation notice by `callSid`
+  (Twilio's own call identifier — reliable, and a completely different field from `.uuid`,
+  unaffected by any of this), but now emits `pendingSession?.callUUID` (this app's own value)
+  rather than `pendingInvite?.uuid` — a real bug that would have been reintroduced by reverting
+  the `PushKitAdapter` override below without also fixing this emission site to match.
+- **Reverted the `PushKitAdapter.callInviteReceived` override added in build 17** (which had
+  rewritten the incoming session's `callUUID` to `callInvite.uuid` specifically so it would
+  match Twilio's own field). That workaround is no longer needed — nothing anywhere in
+  `TwilioVoiceAdapter` reads Twilio's own uuid fields for matching anymore — and removing it
+  means the recipient's local session no longer depends on a Twilio-internal field being
+  reliably populated at all.
+
+**Timer desync: confirmed via real server data exactly why the build-18 fix "didn't work."**
+Checked `call_sessions` for the owner's actual failed retest: `ringing_at` to `connected_at` was
+about **6 seconds** — the real time it took to answer. `reconcileConnectedAt`'s retry window was
+5 attempts × 400ms = 2 seconds total, well short of that. It wasn't silently broken; it was
+timing out before the webhook (correctly, per the build-18 "in-progress" fix) had even landed.
+Confirmed `connected_at` genuinely IS being recorded server-side now — the mechanism works, the
+window was just too short for a realistic answer delay. Widened to 60 attempts × 1s (a full
+minute), comfortably covering any plausible ring/answer window.
+
+**Known, deliberately-deferred follow-up, not silently ignored**: `setSpeakerEnabled` replaces
+`DefaultAudioDevice`'s entire `block` closure with one that only calls
+`overrideOutputAudioPort`, discarding whatever the SDK's own default block was doing for the
+underlying `AVAudioSession` category/mode setup (Twilio's docs describe the correct pattern as
+providing a block that sets `.playAndRecord`/mode/options *and* the desired output route, not
+replacing wholesale). Not touched this round since it's user-triggered only (tapping the speaker
+button), not the cause of the current "no audio from the start of any call" report, and fixing it
+without being certain of the exact right category/mode/options values would risk exactly the
+kind of guess this project has learned not to make. Worth a real look once the current fix is
+confirmed and speaker toggling is specifically tested.
+
+Build 19. All 44 backend tests still pass (no backend changes this round). Not yet confirmed on
+a real device.

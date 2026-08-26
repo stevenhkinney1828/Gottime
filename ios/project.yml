@@ -132,8 +132,19 @@ settings:
     # server-authoritative connected_at reconciliation (now possible since the in-progress fix
     # makes the server value real), and the naming fix itself. Also added the owner's requested
     # 15s/30s/1min/3min duration presets (request-call's floor lowered from 60s to 15s to allow
-    # them). See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "18"
+    # them). See DECISIONS.md. 18->19: build 18's retest found the mic-permission fix alone
+    # wasn't enough -- still no audio even with permission granted on both phones -- and the
+    # timer still desynced. Root cause for both, confirmed via Twilio's own docs (not guessed):
+    # ConnectOptions.uuid/AcceptOptions.uuid (forced since Phase 4, to make Twilio's own Call/
+    # CallInvite uuid match this app's call_uuid for matching purposes) tells the SDK "this app
+    # manages CallKit's own audio activation" -- since this app never does (no CallKit yet), the
+    # SDK's automatic audio-device activation was silently disabled the entire time. Stopped
+    # forcing it; matching now uses Call object identity (for CallDelegate routing) and this
+    # app's own call_uuid exclusively (for answer/decline/cancel), never Twilio's own uuid
+    # fields, which are documented as genuinely optional once no longer forced. Separately, the
+    # timer reconciliation's retry window (2s) was far shorter than a realistic time-to-answer
+    # (confirmed ~6s in the actual failed test) -- widened to 60s. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "19"
 
 packages:
   GotTimeCore:
