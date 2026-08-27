@@ -202,12 +202,12 @@ public final class TwilioVoiceAdapter: NSObject, VoiceService, @unchecked Sendab
     /// a real VoIP push delivers one. Kept as a plain method (not a NotificationDelegate
     /// conformance on this type) so this adapter has no PushKit dependency of its own — it only
     /// needs to be handed a `CallInvite` however one arrives.
-    public func handleIncomingCallInvite(_ callInvite: CallInvite, callerProfile: Profile, session: CallSession) {
+    public func handleIncomingCallInvite(_ callInvite: CallInvite, callerProfile: Profile, callerNickname: String?, session: CallSession) {
         lock.lock()
         pendingInvite = callInvite
         pendingSession = session
         lock.unlock()
-        emit(.incomingCall(session: session, callerProfile: callerProfile))
+        emit(.incomingCall(session: session, callerProfile: callerProfile, callerNickname: callerNickname))
     }
 
     /// Called by `PushKitAdapter`'s `NotificationDelegate.cancelledCallInviteReceived(...)` when

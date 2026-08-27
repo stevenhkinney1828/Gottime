@@ -47,7 +47,7 @@ struct DurationPickerView: View {
                 Text("How long do you have?")
                     .font(.title2.bold())
                     .foregroundStyle(Color.gtTextPrimary)
-                Text("for \(person.profile.firstName ?? "them")")
+                Text("for \(person.displayName)")
                     .font(.subheadline)
                     .foregroundStyle(Color.gtTextSecondary)
             }
@@ -86,8 +86,7 @@ struct DurationPickerView: View {
 
     private var confirmTitle: String {
         guard let seconds = resolvedSeconds else { return "Call" }
-        let name = person.profile.firstName ?? "them"
-        return "Call \(name) for \(DurationPolicy.formatDuration(seconds))"
+        return "Call \(person.displayName) for \(DurationPolicy.formatDuration(seconds))"
     }
 
     private var presetGrid: some View {

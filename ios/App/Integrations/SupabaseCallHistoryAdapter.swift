@@ -40,11 +40,17 @@ public final class SupabaseCallHistoryAdapter: CallHistoryService, Sendable {
             .execute()
             .value
         let profilesById = Dictionary(uniqueKeysWithValues: profileRows.map { ($0.id, $0) })
+        let nicknamesById = await ContactNicknames.fetchNicknames(client: client, targetUserIds: otherIds)
 
         return rows.compactMap { row in
             let otherId = row.callerId == myId ? row.recipientId : row.callerId
             guard let otherProfile = profilesById[otherId] else { return nil }
-            return CallHistoryEntry(session: row.session, otherPerson: otherProfile.profile, isOutgoing: row.callerId == myId)
+            return CallHistoryEntry(
+                session: row.session,
+                otherPerson: otherProfile.profile,
+                isOutgoing: row.callerId == myId,
+                nickname: nicknamesById[otherId]
+            )
         }
     }
 }

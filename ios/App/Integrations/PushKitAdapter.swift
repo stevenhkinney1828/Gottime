@@ -69,10 +69,12 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
 
     // MARK: - Incoming push -> caller profile + session lookup
 
-    /// Sequential, not concurrent (`async let`) — these are two small, fast PostgREST reads,
-    /// not a performance-sensitive path, and the simpler sequential form has no `async let`
-    /// syntax to get subtly wrong with no way to compile-check it locally.
-    private func fetchIncomingCallContext(callerId: UUID, callSessionId: UUID) async throws -> (Profile, CallSession) {
+    /// Sequential, not concurrent (`async let`) — these are small, fast PostgREST reads, not a
+    /// performance-sensitive path, and the simpler sequential form has no `async let` syntax to
+    /// get subtly wrong with no way to compile-check it locally. The nickname lookup is
+    /// best-effort by design (see `ContactNicknames`' own comment) — this device's own private
+    /// label for the caller, if any, resolved from this recipient's own point of view.
+    private func fetchIncomingCallContext(callerId: UUID, callSessionId: UUID) async throws -> (Profile, String?, CallSession) {
         let profileRow: ProfileRow = try await client.from("profiles")
             .select()
             .eq("id", value: callerId)
@@ -85,7 +87,8 @@ public final class PushKitAdapter: NSObject, PushService, @unchecked Sendable {
             .single()
             .execute()
             .value
-        return (profileRow.profile, sessionRow.session)
+        let nickname = await ContactNicknames.fetchNickname(client: client, targetUserId: callerId)
+        return (profileRow.profile, nickname, sessionRow.session)
     }
 
     /// Best-effort diagnostic write, not a critical-path operation: a failure here (e.g. no
@@ -226,25 +229,33 @@ extension PushKitAdapter: NotificationDelegate {
                 detail: "callerId=\(callerId) callSessionId=\(callSessionId)"
             )
             do {
-                let context = try await self.fetchIncomingCallContext(callerId: callerId, callSessionId: callSessionId)
+                let (callerProfile, callerNickname, session) = try await self.fetchIncomingCallContext(
+                    callerId: callerId,
+                    callSessionId: callSessionId
+                )
                 await self.reportIncomingPushStatus(status: "context_fetched", detail: nil)
                 // session.callUUID is passed through unmodified (no override, unlike build 17's
                 // now-reverted approach) -- TwilioVoiceAdapter matches entirely on this app's own
                 // call_uuid (pendingInviteMatching/disconnectActiveCall) and Call object identity
                 // (applyAndEmit), never on Twilio's own uuid fields. See DECISIONS.md.
-                self.voiceAdapter.handleIncomingCallInvite(callInvite, callerProfile: context.0, session: context.1)
+                self.voiceAdapter.handleIncomingCallInvite(
+                    callInvite,
+                    callerProfile: callerProfile,
+                    callerNickname: callerNickname,
+                    session: session
+                )
                 // Corrects the placeholder CallKit was given at report time, now that the
-                // caller's real name, requested duration, and optional topic are actually known
-                // -- composed into one localizedCallerName (e.g. "Thunder • 10 min • Dinner
-                // tonight"), per the owner's own explicit requirements that the lock screen show
-                // the requested duration and, when the caller provided one, what the call is
-                // about.
+                // caller's real name (or this device's own private nickname for them, if set),
+                // requested duration, and optional topic are actually known -- composed into one
+                // localizedCallerName (e.g. "Thunder • 10 min • Dinner tonight"), per the owner's
+                // own explicit requirements that the lock screen show the requested duration and,
+                // when the caller provided one, what the call is about.
                 self.callKitAdapter.updateReportedCall(
                     callKitUUID: callInvite.uuid,
-                    appCallUUID: context.1.callUUID,
-                    callerName: context.0.firstName ?? "Unknown",
-                    requestedDurationSeconds: context.1.requestedDurationSeconds,
-                    topic: context.1.topic
+                    appCallUUID: session.callUUID,
+                    callerName: callerNickname ?? callerProfile.firstName ?? "Unknown",
+                    requestedDurationSeconds: session.requestedDurationSeconds,
+                    topic: session.topic
                 )
                 await self.reportIncomingPushStatus(status: "delivered_to_coordinator", detail: nil)
             } catch {

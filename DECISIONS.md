@@ -2605,3 +2605,84 @@ regression: `req.formData()` throws when there's no parseable body at all, uncau
 this function's pre-existing behavior, untouched by this change); a properly form-encoded POST
 (matching how Twilio actually calls this) correctly returned `200` with the graceful
 `<Reject/>` TwiML. All 55 backend tests still pass. No iOS changes.
+
+## Per-connection nicknames — the first of three deferred features, now built
+
+Asked how self-reported names actually work, and the owner immediately spotted the real gap
+himself: `profiles.first_name` is entirely self-reported and freely editable via Settings at any
+time, with zero restriction — a connection really could rename themselves "Mom" as a prank, and
+everyone connected to them would see it everywhere (People list, lock screen, History). Confirmed
+by actually reading `profiles_update_self`'s RLS policy (row-level only, no column restriction)
+and `SettingsView.saveName()` (a plain free-form text field, no validation beyond non-blank)
+rather than assuming. The real fix, matching how phone Contacts apps solve this exact problem: a
+private, per-viewer label that overrides what's shown, independent of whatever the other person
+calls themselves.
+
+**Design decision: key by `(owner_user_id, target_user_id)`, not `connection_id`.** A nickname is
+conceptually "what I call this *person*," not tied to one specific connection instance — it
+should survive a disconnect/reconnect cycle rather than silently reset, and every real call site
+that needs one (an incoming push, an active call, a History entry) already has the other
+person's raw user id on hand, never a `connection_id`. `connections_active_pair_unique` (see
+`0003_connections.sql`) already guarantees at most one active connection per pair at a time, so
+this key loses nothing relationally versus keying by `connection_id` while being strictly more
+convenient at every actual lookup site. New table: `contact_nicknames` (migration 0014), RLS-gated
+so setting one requires an active connection to that target (a data-hygiene guard, not
+security-critical — nicknames are never visible to anyone but their owner regardless, verified in
+`sql-lint.yml`'s new RLS step: Bob cannot see Alice's private nickname for him, and Carol —not
+connected to Alice — cannot attach one to her user id at all, both via real RLS enforcement
+against a throwaway seeded Postgres, not just code review).
+
+**Where the fallback logic lives, and why it isn't a silent `Profile.firstName` override.**
+Considered substituting the nickname directly into a constructed `Profile.firstName` at the
+adapter layer, which would have meant zero UI call-site changes at all — rejected, since `Profile`
+is documented elsewhere as mirroring the `profiles` table exactly, and quietly making that untrue
+for "someone else's profile, as I've privately renamed them" felt like exactly the kind of subtle
+lie in the data model this project has otherwise avoided throughout. Instead: `ConnectedPerson`
+and `CallHistoryEntry` both gained an honest `nickname: String?` field alongside the real
+`Profile`, plus a `displayName` computed property (`nickname ?? profile.firstName ?? "Unknown"`)
+that is the *only* thing any UI call site should ever read. `CallCoordinator`'s own presentation
+structs (`ActiveCallPresentation`/`IncomingCallPresentation`) needed the same treatment, since an
+active or incoming call's "other person" doesn't always arrive wrapped in a `ConnectedPerson` (an
+incoming call in particular is resolved from a raw caller id, not a connections-list lookup).
+Every real display call site — `PersonRow`, `DurationPickerView`, `ActiveCallView`,
+`IncomingCallView`, `HistoryView`, and `CallKitAdapter`'s composed lock-screen label (via
+`PushKitAdapter`) — now reads `displayName`/an equivalent resolved string, never
+`profile.firstName` directly, for someone else's identity.
+
+**A new shared resolver, `ContactNicknames`, rather than threading `ConnectionService`
+everywhere.** `PushKitAdapter` (resolving an incoming caller's nickname) and
+`SupabaseCallHistoryAdapter` (resolving each History entry's other participant) both need a
+nickname lookup but have no other reason to depend on `ConnectionService` — giving either one a
+full `ConnectionService` dependency just for this would be a real, unjustified architectural
+widening. Instead, a small `ContactNicknames` enum (two static functions, single-lookup and
+batch) that any adapter already holding a `SupabaseClient` can call directly — best-effort by
+design (a failed lookup silently falls back to no override, matching this project's established
+discretion for other non-critical reads), matching the exact pattern `SupabaseConnectionAdapter
+.fetchConnections` already used for batch-resolving profiles, just generalized into its own file
+since three separate adapters now need it.
+
+**`VoiceEvent.incomingCall` gained a `callerNickname: String?` associated value** (no default —
+every real call site, `TwilioVoiceAdapter`/`MockVoiceService`, was updated explicitly rather than
+letting one silently pass `nil`), threaded through `CallCoordinator`'s `incomingCall` tuple and
+both presentation structs. `ConnectionService` gained `setNickname(_:for:)` — `nil`/blank deletes
+the `contact_nicknames` row rather than writing an empty string, matching that table's own
+"absence of a row is the no-override state" design.
+
+**New `RenamePersonView`**, reachable two ways: a swipe action on each row in the multi-person
+People list (chosen over a context menu for discoverability, and over reusing the row's own tap
+target since that's already reserved for placing a call), or a small pencil button next to the
+name in the single-connection fast-path layout. Shows the connection's real self-reported name in
+its own copy ("this is just for you — Thunder won't see it") deliberately, not the nickname being
+set — the whole point of that screen is explaining the override relative to their actual name.
+"Reset to their own name" only appears once a nickname is actually set; clearing the text field
+and saving does the same thing, for anyone who finds that more natural than a separate button.
+
+Build 26. `GotTimeCore`/`GotTimeMocks` test coverage added for `displayName`'s fallback chain (both
+`ConnectedPerson` and `CallHistoryEntry`) and `MockConnectionService.setNickname`. Every touched
+file re-read in full for internal consistency, per this project's own established practice with
+no local compiler — this was the largest single-round file count this session (twenty-some files
+touched, most of them small, mechanical display-call-site updates once the core `nickname`/
+`displayName` concept existed in the two model types). Not yet confirmed on a real device — needs
+setting a nickname, confirming it shows up on the lock screen for an incoming call from that
+person, in History, and in the People list, and confirming "Reset to their own name" genuinely
+reverts to what they've actually self-reported.

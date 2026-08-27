@@ -9,13 +9,19 @@ import GotTimeCore
 struct ActiveCallPresentation: Identifiable {
     let session: CallSession
     let otherPerson: Profile
+    /// This device's own private label for `otherPerson`, if set — see
+    /// `ConnectedPerson.nickname`'s own doc comment.
+    let nickname: String?
     var id: UUID { session.id }
+    var displayName: String { nickname ?? otherPerson.firstName ?? "Unknown" }
 }
 
 struct IncomingCallPresentation: Identifiable {
     let session: CallSession
     let callerProfile: Profile
+    let nickname: String?
     var id: UUID { session.id }
+    var displayName: String { nickname ?? callerProfile.firstName ?? "Unknown" }
 }
 
 /// Single combined presentation state, replacing two independent `.fullScreenCover(item:)`
@@ -55,7 +61,8 @@ final class CallCoordinator {
 
     private(set) var activeCall: CallSession?
     private(set) var activeCallOtherPerson: Profile?
-    private(set) var incomingCall: (session: CallSession, callerProfile: Profile)?
+    private(set) var activeCallOtherPersonNickname: String?
+    private(set) var incomingCall: (session: CallSession, callerProfile: Profile, callerNickname: String?)?
 
     private var tickTrigger: Date = .now
     // nonisolated(unsafe): deinit always runs in a nonisolated context in Swift's concurrency
@@ -87,12 +94,16 @@ final class CallCoordinator {
 
     var activeCallPresentation: ActiveCallPresentation? {
         guard let activeCall, let activeCallOtherPerson else { return nil }
-        return ActiveCallPresentation(session: activeCall, otherPerson: activeCallOtherPerson)
+        return ActiveCallPresentation(session: activeCall, otherPerson: activeCallOtherPerson, nickname: activeCallOtherPersonNickname)
     }
 
     var incomingCallPresentation: IncomingCallPresentation? {
         guard let incomingCall else { return nil }
-        return IncomingCallPresentation(session: incomingCall.session, callerProfile: incomingCall.callerProfile)
+        return IncomingCallPresentation(
+            session: incomingCall.session,
+            callerProfile: incomingCall.callerProfile,
+            nickname: incomingCall.callerNickname
+        )
     }
 
     /// Incoming takes priority in the (currently impossible, but not enforced anywhere) case
@@ -130,12 +141,14 @@ final class CallCoordinator {
         }
         activeCall = session
         activeCallOtherPerson = person.profile
+        activeCallOtherPersonNickname = person.nickname
     }
 
     func answerIncomingCall() async {
         guard let incoming = incomingCall else { return }
         activeCall = incoming.session
         activeCallOtherPerson = incoming.callerProfile
+        activeCallOtherPersonNickname = incoming.callerNickname
         incomingCall = nil
         try? await voiceService.answer(callUUID: incoming.session.callUUID)
     }
@@ -174,6 +187,7 @@ final class CallCoordinator {
     func dismissActiveCall() {
         activeCall = nil
         activeCallOtherPerson = nil
+        activeCallOtherPersonNickname = nil
         stopTicking()
     }
 
@@ -188,8 +202,8 @@ final class CallCoordinator {
     /// role as just another caller of the same underlying VoiceService, not a special case.
     private func handle(_ event: VoiceEvent) {
         switch event {
-        case .incomingCall(let session, let callerProfile):
-            incomingCall = (session, callerProfile)
+        case .incomingCall(let session, let callerProfile, let callerNickname):
+            incomingCall = (session, callerProfile, callerNickname)
 
         case .statusChanged(let session):
             if activeCall?.callUUID == session.callUUID {
@@ -197,6 +211,7 @@ final class CallCoordinator {
             } else if incomingCall?.session.callUUID == session.callUUID {
                 activeCall = session
                 activeCallOtherPerson = incomingCall?.callerProfile
+                activeCallOtherPersonNickname = incomingCall?.callerNickname
                 incomingCall = nil
             } else {
                 return

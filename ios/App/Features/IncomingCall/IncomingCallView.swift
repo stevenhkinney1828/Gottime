@@ -9,15 +9,18 @@ import GotTimeCore
 struct IncomingCallView: View {
     let session: CallSession
     let callerProfile: Profile
+    let nickname: String?
 
     @Environment(CallCoordinator.self) private var coordinator
+
+    private var displayName: String { nickname ?? callerProfile.firstName ?? "Unknown" }
 
     private var requestedDurationLabel: String {
         DurationPolicy.formatDuration(session.requestedDurationSeconds)
     }
 
     private var accessibilityLabel: String {
-        let base = "\(callerProfile.firstName ?? "Unknown") is calling for \(requestedDurationLabel)"
+        let base = "\(displayName) is calling for \(requestedDurationLabel)"
         guard let topic = session.topic, !topic.isEmpty else { return base }
         return "\(base), about \(topic)"
     }
@@ -30,13 +33,13 @@ struct IncomingCallView: View {
                 .fill(Color.gtAccent.opacity(0.15))
                 .frame(width: 120, height: 120)
                 .overlay(
-                    Text((callerProfile.firstName?.first).map(String.init)?.uppercased() ?? "?")
+                    Text(displayName.first.map(String.init)?.uppercased() ?? "?")
                         .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(Color.gtAccent)
                 )
 
             VStack(spacing: 8) {
-                Text(callerProfile.firstName ?? "Unknown")
+                Text(displayName)
                     .font(.largeTitle.bold())
                     .foregroundStyle(Color.gtTextPrimary)
                 Text(requestedDurationLabel)

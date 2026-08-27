@@ -36,12 +36,22 @@ public struct Connection: Identifiable, Equatable, Sendable, Codable {
 public struct ConnectedPerson: Identifiable, Equatable, Sendable {
     public let connectionId: UUID
     public let profile: Profile
+    /// A private label only the current user set, overriding `profile.firstName` wherever this
+    /// person is shown — independent of whatever they call themselves, which is entirely
+    /// self-reported and freely editable (see `contact_nicknames`' own migration comment for
+    /// why this exists: a connection could otherwise rename themselves "Mom" as a prank).
+    public let nickname: String?
 
     public var id: UUID { profile.id }
 
-    public init(connectionId: UUID, profile: Profile) {
+    /// What should actually be displayed for this person — never read `profile.firstName`
+    /// directly at a UI call site; this is the one place that fallback chain lives.
+    public var displayName: String { nickname ?? profile.firstName ?? "Unknown" }
+
+    public init(connectionId: UUID, profile: Profile, nickname: String? = nil) {
         self.connectionId = connectionId
         self.profile = profile
+        self.nickname = nickname
     }
 }
 

@@ -79,10 +79,10 @@ struct ContentView: View {
     private func callOverlay(coordinator: CallCoordinator) -> some View {
         switch coordinator.presentation {
         case .incoming(let presentation):
-            IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile)
+            IncomingCallView(session: presentation.session, callerProfile: presentation.callerProfile, nickname: presentation.nickname)
                 .environment(coordinator)
         case .active(let presentation):
-            ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson)
+            ActiveCallView(session: presentation.session, otherPerson: presentation.otherPerson, nickname: presentation.nickname)
                 .environment(coordinator)
         case nil:
             EmptyView()

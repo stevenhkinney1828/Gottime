@@ -217,8 +217,23 @@ settings:
     # truncates rather than rejects, blank normalizes to null), a new field on DurationPickerView,
     # and threaded through CallSession/VoiceService/TwilioVoiceAdapter/PushKitAdapter into
     # CallKitAdapter's composed localizedCallerName (e.g. "Thunder • 10 min • Dinner tonight") and
-    # IncomingCallView. See DECISIONS.md.
-    CURRENT_PROJECT_VERSION: "25"
+    # IncomingCallView. See DECISIONS.md. 25->26: per-connection nicknames, the first of three
+    # features the owner asked to build (Siri and Respond-with-Text deferred, in that stated
+    # order) -- prompted by asking how self-reported names work and realizing a connection could
+    # rename themselves "Mom" as a prank, since first_name is entirely unrestricted and freely
+    # editable. New `contact_nicknames` table (migration 0014), keyed by (owner_user_id,
+    # target_user_id) rather than connection_id -- a nickname is "what I call this person," not
+    # tied to one connection instance, so it survives a disconnect/reconnect (connections'
+    # own unique-active-pair index means this loses nothing relationally). ConnectedPerson and
+    # CallHistoryEntry both gained `nickname`/`displayName`; every display call site (People list,
+    # duration picker, active/incoming call screens, CallKit's composed label, History) now reads
+    # `displayName` instead of `profile.firstName` directly. New RenamePersonView, reachable via a
+    # swipe action on each People-list row or a pencil button in the single-connection layout.
+    # ConnectionService gained `setNickname`; PushKitAdapter/SupabaseCallHistoryAdapter both
+    # resolve nicknames via a new shared `ContactNicknames` helper, since neither otherwise depends
+    # on ConnectionService. VoiceEvent.incomingCall gained a `callerNickname` associated value,
+    # threaded through CallCoordinator's presentation structs. See DECISIONS.md.
+    CURRENT_PROJECT_VERSION: "26"
 
 packages:
   GotTimeCore:

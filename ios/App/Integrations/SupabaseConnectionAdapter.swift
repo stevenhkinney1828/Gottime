@@ -42,12 +42,13 @@ public final class SupabaseConnectionAdapter: ConnectionService, Sendable {
             .execute()
             .value
         let profilesById = Dictionary(uniqueKeysWithValues: profileRows.map { ($0.id, $0) })
+        let nicknamesById = await ContactNicknames.fetchNicknames(client: client, targetUserIds: otherIds)
 
         return rows.compactMap { row in
             guard let otherId = row.otherUserId(from: myId), let profileRow = profilesById[otherId] else {
                 return nil
             }
-            return ConnectedPerson(connectionId: row.id, profile: profileRow.profile)
+            return ConnectedPerson(connectionId: row.id, profile: profileRow.profile, nickname: nicknamesById[otherId])
         }
     }
 
@@ -108,6 +109,42 @@ public final class SupabaseConnectionAdapter: ConnectionService, Sendable {
             .update(["status": "removed"])
             .eq("id", value: id)
             .execute()
+    }
+
+    /// `nil`/blank deletes the row rather than writing an empty string -- absence of a row is
+    /// `contact_nicknames`' own "no override" state (see that migration's comment), matching
+    /// `ConnectedPerson.nickname`'s optional, not-empty-string convention.
+    public func setNickname(_ nickname: String?, for personId: UUID) async throws {
+        guard let myId = client.auth.currentSession?.user.id else {
+            throw SupabaseConnectionAdapterError.notSignedIn
+        }
+        let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            try await client.from("contact_nicknames")
+                .upsert(
+                    NewContactNickname(ownerUserId: myId, targetUserId: personId, nickname: trimmed),
+                    onConflict: "owner_user_id,target_user_id"
+                )
+                .execute()
+        } else {
+            try await client.from("contact_nicknames")
+                .delete()
+                .eq("owner_user_id", value: myId)
+                .eq("target_user_id", value: personId)
+                .execute()
+        }
+    }
+}
+
+private struct NewContactNickname: Encodable {
+    let ownerUserId: UUID
+    let targetUserId: UUID
+    let nickname: String
+
+    enum CodingKeys: String, CodingKey {
+        case ownerUserId = "owner_user_id"
+        case targetUserId = "target_user_id"
+        case nickname
     }
 }
 

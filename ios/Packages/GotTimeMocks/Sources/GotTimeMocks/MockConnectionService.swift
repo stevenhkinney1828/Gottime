@@ -49,4 +49,12 @@ public final class MockConnectionService: ConnectionService, @unchecked Sendable
         connections.removeAll { $0.connectionId == id }
         lock.unlock()
     }
+
+    public func setNickname(_ nickname: String?, for personId: UUID) async throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = connections.firstIndex(where: { $0.id == personId }) else { return }
+        let existing = connections[index]
+        connections[index] = ConnectedPerson(connectionId: existing.connectionId, profile: existing.profile, nickname: nickname)
+    }
 }

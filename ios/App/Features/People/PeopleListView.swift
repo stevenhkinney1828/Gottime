@@ -11,6 +11,7 @@ struct PeopleListView: View {
     @State private var isLoading = true
     @State private var selectedPerson: ConnectedPerson?
     @State private var showingAddConnection = false
+    @State private var personToRename: ConnectedPerson?
     /// Set by DurationPickerView's onConfirm, consumed by the sheet's onDismiss — see the doc
     /// comment on DurationPickerView.confirmCall() for why the call starts here, only once the
     /// sheet has actually finished dismissing, rather than from inside the sheet itself.
@@ -58,6 +59,11 @@ struct PeopleListView: View {
                 }
             }
         }
+        .sheet(item: $personToRename) { person in
+            RenamePersonView(person: person) { nickname in
+                Task { await saveNickname(nickname, for: person) }
+            }
+        }
         .sheet(isPresented: $showingAddConnection, onDismiss: {
             // Without this, a successful connection left the list showing whatever it had
             // before AddConnectionView ever appeared — .task only runs once on first
@@ -83,6 +89,12 @@ struct PeopleListView: View {
                 PersonRow(person: person)
             }
             .listRowBackground(Color.gtSurface)
+            .swipeActions(edge: .trailing) {
+                Button("Rename") {
+                    personToRename = person
+                }
+                .tint(.gtAccent)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -95,14 +107,24 @@ struct PeopleListView: View {
                 .fill(Color.gtAccent.opacity(0.15))
                 .frame(width: 96, height: 96)
                 .overlay(
-                    Text((person.profile.firstName?.first).map(String.init)?.uppercased() ?? "?")
+                    Text(person.displayName.first.map(String.init)?.uppercased() ?? "?")
                         .font(.system(size: 36, weight: .semibold))
                         .foregroundStyle(Color.gtAccent)
                 )
-            Text(person.profile.firstName ?? "Unknown")
-                .font(.title.bold())
-                .foregroundStyle(Color.gtTextPrimary)
-            PrimaryButton(title: "Call \(person.profile.firstName ?? "them")") {
+            HStack(spacing: 8) {
+                Text(person.displayName)
+                    .font(.title.bold())
+                    .foregroundStyle(Color.gtTextPrimary)
+                Button {
+                    personToRename = person
+                } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.gtTextSecondary)
+                }
+                .accessibilityLabel("Rename \(person.displayName)")
+            }
+            PrimaryButton(title: "Call \(person.displayName)") {
                 selectedPerson = person
             }
             .padding(.horizontal, 48)
@@ -131,5 +153,14 @@ struct PeopleListView: View {
         isLoading = people.isEmpty
         people = (try? await environment.connectionService.fetchConnections()) ?? []
         isLoading = false
+    }
+
+    /// Patches the in-memory list directly rather than re-fetching everything — this is the
+    /// one piece of local state RenamePersonView's save actually needs reflected immediately,
+    /// and a full `loadConnections()` would flash the loading state for no reason.
+    private func saveNickname(_ nickname: String?, for person: ConnectedPerson) async {
+        try? await environment.connectionService.setNickname(nickname, for: person.id)
+        guard let index = people.firstIndex(where: { $0.id == person.id }) else { return }
+        people[index] = ConnectedPerson(connectionId: person.connectionId, profile: person.profile, nickname: nickname)
     }
 }

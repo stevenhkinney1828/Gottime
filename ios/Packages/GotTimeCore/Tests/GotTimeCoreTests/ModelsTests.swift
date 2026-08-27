@@ -86,3 +86,51 @@ final class ConnectionTests: XCTestCase {
         XCTAssertNil(connection.otherUserId(from: stranger))
     }
 }
+
+final class ConnectedPersonDisplayNameTests: XCTestCase {
+    private func makePerson(firstName: String?, nickname: String?) -> ConnectedPerson {
+        ConnectedPerson(
+            connectionId: UUID(),
+            profile: Profile(id: UUID(), firstName: firstName, createdAt: .now, updatedAt: .now),
+            nickname: nickname
+        )
+    }
+
+    func testDisplayNamePrefersNicknameOverSelfReportedName() {
+        XCTAssertEqual(makePerson(firstName: "Thunder", nickname: "Bro").displayName, "Bro")
+    }
+
+    func testDisplayNameFallsBackToSelfReportedNameWhenNoNickname() {
+        XCTAssertEqual(makePerson(firstName: "Thunder", nickname: nil).displayName, "Thunder")
+    }
+
+    func testDisplayNameFallsBackToUnknownWhenNeitherIsSet() {
+        XCTAssertEqual(makePerson(firstName: nil, nickname: nil).displayName, "Unknown")
+    }
+}
+
+final class CallHistoryEntryDisplayNameTests: XCTestCase {
+    private func makeEntry(firstName: String?, nickname: String?) -> CallHistoryEntry {
+        let profile = Profile(id: UUID(), firstName: firstName, createdAt: .now, updatedAt: .now)
+        let session = CallSession(
+            id: UUID(),
+            callUUID: UUID(),
+            callerId: UUID(),
+            recipientId: UUID(),
+            requestedDurationSeconds: 300,
+            initiatedAt: .now,
+            status: .completed,
+            createdAt: .now,
+            updatedAt: .now
+        )
+        return CallHistoryEntry(session: session, otherPerson: profile, isOutgoing: true, nickname: nickname)
+    }
+
+    func testDisplayNamePrefersNicknameOverSelfReportedName() {
+        XCTAssertEqual(makeEntry(firstName: "Thunder", nickname: "Bro").displayName, "Bro")
+    }
+
+    func testDisplayNameFallsBackToSelfReportedNameWhenNoNickname() {
+        XCTAssertEqual(makeEntry(firstName: "Thunder", nickname: nil).displayName, "Thunder")
+    }
+}

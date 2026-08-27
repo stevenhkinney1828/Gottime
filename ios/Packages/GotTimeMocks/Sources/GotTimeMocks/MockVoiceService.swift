@@ -146,7 +146,7 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
     /// screen directly — spec section 6: the recipient must see caller identity + requested
     /// duration before answering — without needing startCall's caller-side flow at all.
     @discardableResult
-    public func simulateIncomingCall(from caller: Profile, requestedDurationSeconds: Int) -> CallSession {
+    public func simulateIncomingCall(from caller: Profile, requestedDurationSeconds: Int, callerNickname: String? = nil) -> CallSession {
         lock.lock()
         profileDirectory[caller.id] = caller
         lock.unlock()
@@ -166,7 +166,7 @@ public final class MockVoiceService: VoiceService, @unchecked Sendable {
         session = (try? CallStateMachine.apply(.outgoing, to: session, at: now)) ?? session
         session = (try? CallStateMachine.apply(.ringing, to: session, at: now)) ?? session
         storeNew(session)
-        continuation.yield(.incomingCall(session: session, callerProfile: caller))
+        continuation.yield(.incomingCall(session: session, callerProfile: caller, callerNickname: callerNickname))
         return session
     }
 

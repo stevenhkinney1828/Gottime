@@ -9,16 +9,19 @@ import GotTimeCore
 struct ActiveCallView: View {
     let session: CallSession
     let otherPerson: Profile
+    let nickname: String?
 
     @Environment(CallCoordinator.self) private var coordinator
     @State private var isMuted = false
     @State private var isSpeakerOn = false
 
+    private var displayName: String { nickname ?? otherPerson.firstName ?? "Unknown" }
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
 
-            Text(otherPerson.firstName ?? "Unknown")
+            Text(displayName)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(Color.gtTextPrimary)
 
@@ -78,7 +81,7 @@ struct ActiveCallView: View {
             CallStatusBadge(status: session.status)
 
             VStack(spacing: 12) {
-                PrimaryButton(title: "Call \(otherPerson.firstName ?? "again") again") {
+                PrimaryButton(title: "Call \(displayName) again") {
                     coordinator.dismissActiveCall()
                 }
                 Button("Done") {
@@ -96,7 +99,7 @@ struct ActiveCallView: View {
         switch session.status {
         case .completed: return "Time's up"
         case .endedEarly: return "Call ended"
-        case .declined: return "\(otherPerson.firstName ?? "They") declined"
+        case .declined: return "\(displayName) declined"
         case .missed: return "No answer"
         case .canceled: return "Call canceled"
         case .failed: return "Call failed"

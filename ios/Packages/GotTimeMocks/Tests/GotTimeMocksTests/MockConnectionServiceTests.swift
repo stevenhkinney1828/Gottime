@@ -46,4 +46,34 @@ final class MockConnectionServiceTests: XCTestCase {
         XCTAssertEqual(after.count, before.count - 1)
         XCTAssertFalse(after.contains { $0.connectionId == first.connectionId })
     }
+
+    func testSetNicknameOverridesDisplayName() async throws {
+        let service = MockConnectionService()
+        let before = try await service.fetchConnections()
+        guard let first = before.first else { return XCTFail("expected seed data") }
+        XCTAssertNil(first.nickname)
+
+        try await service.setNickname("Bug", for: first.id)
+        let after = try await service.fetchConnections()
+        guard let renamed = after.first(where: { $0.id == first.id }) else {
+            return XCTFail("expected the same person still present")
+        }
+        XCTAssertEqual(renamed.nickname, "Bug")
+        XCTAssertEqual(renamed.displayName, "Bug")
+    }
+
+    func testSetNicknameToNilClearsIt() async throws {
+        let service = MockConnectionService()
+        let before = try await service.fetchConnections()
+        guard let first = before.first else { return XCTFail("expected seed data") }
+
+        try await service.setNickname("Bug", for: first.id)
+        try await service.setNickname(nil, for: first.id)
+        let after = try await service.fetchConnections()
+        guard let cleared = after.first(where: { $0.id == first.id }) else {
+            return XCTFail("expected the same person still present")
+        }
+        XCTAssertNil(cleared.nickname)
+        XCTAssertEqual(cleared.displayName, first.profile.firstName ?? "Unknown")
+    }
 }

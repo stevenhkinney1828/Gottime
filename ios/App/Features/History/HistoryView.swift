@@ -50,7 +50,7 @@ private struct HistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(entry.otherPerson.firstName ?? "Unknown")
+                Text(entry.displayName)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Color.gtTextPrimary)
                 Spacer()

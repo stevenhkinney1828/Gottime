@@ -18,7 +18,7 @@ struct PersonRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(person.profile.firstName ?? "Unknown")
+                Text(person.displayName)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Color.gtTextPrimary)
                 if let subtitle {
@@ -38,11 +38,11 @@ struct PersonRow: View {
         .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Call \(person.profile.firstName ?? "Unknown")")
+        .accessibilityLabel("Call \(person.displayName)")
     }
 
     private var initial: String {
-        guard let first = person.profile.firstName?.first else { return "?" }
+        guard let first = person.displayName.first else { return "?" }
         return String(first).uppercased()
     }
 }

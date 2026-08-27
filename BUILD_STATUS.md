@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-27 (build 25 confirmed working on a real device, including the ticking countdown; the Phase 6 sweep backstop is built and verified live; a missed call's ring timeout, timed by the owner at 33s and traced to Twilio's own 30s default, is now an explicit 20s, deployed and verified)
+Last updated: 2026-08-27 (build 26 built: per-connection nicknames, the first of three features the owner asked to build in sequence — Siri and "Respond with Text" deferred, in that order, until this one and everything before it is confirmed solid on a real device)
 
-**Current phase: Phase 5 — CallKit integration, essentially complete and confirmed. Phase 6 — Timer enforcement, now fully complete across all three planned layers.** Phase 4's real two-way calling, CallKit lock-screen answering/declining, the auto-end-at-zero fix, real History, the live ticking countdown, and the optional call topic are all built and confirmed working on real devices (see below for the full sequence). While confirming all of this, a direct database query surfaced a real, previously-hidden gap — call sessions that never resolve on their own when a call attempt gets interrupted — which is exactly what Phase 6's long-planned `pg_cron`/`pg_net` sweep backstop exists to catch; it's now built and verified live. Two more features (Siri, "Respond with Text") were discussed and researched but explicitly deferred at the owner's own request until everything already shipped is confirmed solid — see the bottom of Phase 5 below.
+**Current phase: Phase 5/6 complete and confirmed (see below). Now building owner-requested features on top, one at a time, in an agreed order: nicknames → Siri → Respond-with-Text.** Phase 4's real two-way calling, CallKit lock-screen answering/declining, the auto-end-at-zero fix, real History, the live ticking countdown, the optional call topic, and the Phase 6 sweep backstop are all built and confirmed working (see below for the full sequence), including a missed-call ring timeout tuned down to 20s per the owner's own request after timing a real one at 33s. **Per-connection nicknames (build 26)** are now built — prompted by the owner asking how self-reported names work and realizing a connection could rename themselves "Mom" as a prank, since names are entirely self-reported and unrestricted. Not yet confirmed on a real device.
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -152,8 +152,23 @@ work directly from the lock screen.
   data (verified directly against the database, not just the app's own display); the typed topic
   works end to end; and **the ticking countdown actually ticks** on the owner's real phones,
   resolving the one open question the best-effort research-backed caveat above was flagged for.
-- 🔄 **Deferred at the owner's own request, not forgotten** — three features, wanted "in the
-  future," once everything already shipped is confirmed solid:
+- ✅ **Build 26: per-connection nicknames — the first of three owner-requested features,
+  agreed to be built one at a time (nicknames → Siri → Respond-with-Text), rather than all at
+  once.** Found while the owner asked how self-reported names actually work: a connection's
+  displayed name (People list, lock screen, History) was entirely self-reported and freely
+  editable via Settings at any time, with zero validation — a connection really could rename
+  themselves "Mom" as a prank. Fixed with a private, per-viewer nickname (new
+  `contact_nicknames` table, migration 0014) that overrides what's shown on *your* side only,
+  independent of whatever the other person calls themselves — matching how phone Contacts apps
+  solve the same problem. Renamable anytime from the People list (a swipe action, or a pencil
+  button in the single-connection layout) — not tied to the moment you first connect. Every
+  screen that shows a connection's name (People list, duration picker, active/incoming call,
+  the CallKit lock-screen label, History) now uses it. See DECISIONS.md for the full design
+  account, including why this is keyed by the two user ids rather than the connection itself
+  (survives a disconnect/reconnect) and why `Profile.firstName` itself was deliberately left
+  untouched rather than silently overwritten. Not yet confirmed on a real device.
+- 🔄 **Deferred at the owner's own request, not forgotten** — two more features, wanted next,
+  once nicknames are confirmed solid on a real device:
   1. **Siri support** (via App Intents — real and buildable, confirmed via research; requires the
      app to briefly foreground itself when actually placing a call, a real Apple-enforced
      constraint, not a design choice).
@@ -161,15 +176,7 @@ work directly from the lock screen.
      apps — confirmed via research and via a real screenshot showing no "Message" quick action
      even appears; the buildable alternative is an in-app quick-reply delivered as a regular push
      notification after declining, not a literal lock-screen button).
-  3. **Per-connection nicknames** — found while the owner asked how names work: today, a
-     connection's displayed name (People list, lock screen, History) is entirely
-     self-reported and freely editable via Settings at any time, with zero validation — a
-     connection really could rename themselves to "Mom" as a prank, and it would show up
-     exactly that way. The real fix, matching how Contacts apps solve this, is a private,
-     per-viewer nickname that overrides what's shown on *your* side only, independent of
-     whatever the other person calls themselves. Real design questions still open (set at
-     connection time vs. renamable anytime from the People list, or both) — not yet decided.
-  See DECISIONS.md for the full research behind #1 and #2.
+  See DECISIONS.md for the full research behind both.
 
 ## Phase 6 — Timer enforcement ✅ complete — all three planned layers now real
 **Correction to an earlier claim in this section**: the client-side disconnect-at-zero was

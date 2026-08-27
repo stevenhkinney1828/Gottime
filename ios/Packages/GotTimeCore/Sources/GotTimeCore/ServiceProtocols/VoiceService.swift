@@ -8,8 +8,11 @@ import Foundation
 public enum VoiceEvent: Equatable, Sendable {
     /// A call is incoming and should be reported to CallKit (or, in mock mode, shown as an
     /// in-app incoming-call banner). `callerProfile` is what lets the recipient see identity
-    /// + requested duration before answering (spec section 6).
-    case incomingCall(session: CallSession, callerProfile: Profile)
+    /// + requested duration before answering (spec section 6). `callerNickname` is this
+    /// device's own private label for the caller, if one is set — see
+    /// `ConnectedPerson.nickname`'s own doc comment; takes priority over `callerProfile
+    /// .firstName` wherever the caller's name is shown.
+    case incomingCall(session: CallSession, callerProfile: Profile, callerNickname: String?)
 
     /// The call transitioned to a new status. Carries the full session (not just the status)
     /// so a consumer never needs a separate "fetch current session" query to know
