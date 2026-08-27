@@ -1,6 +1,6 @@
 # Build Status
 
-Last updated: 2026-08-27 (build 26 built: per-connection nicknames, the first of three features the owner asked to build in sequence — Siri and "Respond with Text" deferred, in that order, until this one and everything before it is confirmed solid on a real device)
+Last updated: 2026-08-27 (build 26 confirmed green on CI, both jobs, and uploaded to TestFlight; per-connection nicknames, the first of three features the owner asked to build in sequence — Siri and "Respond with Text" deferred, in that order, until this one is confirmed solid on a real device)
 
 **Current phase: Phase 5/6 complete and confirmed (see below). Now building owner-requested features on top, one at a time, in an agreed order: nicknames → Siri → Respond-with-Text.** Phase 4's real two-way calling, CallKit lock-screen answering/declining, the auto-end-at-zero fix, real History, the live ticking countdown, the optional call topic, and the Phase 6 sweep backstop are all built and confirmed working (see below for the full sequence), including a missed-call ring timeout tuned down to 20s per the owner's own request after timing a real one at 33s. **Per-connection nicknames (build 26)** are now built — prompted by the owner asking how self-reported names work and realizing a connection could rename themselves "Mom" as a prank, since names are entirely self-reported and unrestricted. Not yet confirmed on a real device.
 
@@ -166,7 +166,13 @@ work directly from the lock screen.
   the CallKit lock-screen label, History) now uses it. See DECISIONS.md for the full design
   account, including why this is keyed by the two user ids rather than the connection itself
   (survives a disconnect/reconnect) and why `Profile.firstName` itself was deliberately left
-  untouched rather than silently overwritten. Not yet confirmed on a real device.
+  untouched rather than silently overwritten. Build 26 confirmed green on CI (both jobs) and
+  uploaded to TestFlight; the new RLS privacy rule (a nickname is visible only to whoever set
+  it, never the other person or anyone else) is independently confirmed too, verified against a
+  real enforcing Postgres in `sql-lint.yml`, not just written and trusted. **Not yet confirmed on
+  a real device** — needs setting a nickname, then checking it actually shows up on the lock
+  screen for that person's next incoming call, in History, and in the People list, plus
+  confirming "Reset to their own name" genuinely reverts it.
 - 🔄 **Deferred at the owner's own request, not forgotten** — two more features, wanted next,
   once nicknames are confirmed solid on a real device:
   1. **Siri support** (via App Intents — real and buildable, confirmed via research; requires the
