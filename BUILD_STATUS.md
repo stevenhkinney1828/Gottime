@@ -152,14 +152,24 @@ work directly from the lock screen.
   data (verified directly against the database, not just the app's own display); the typed topic
   works end to end; and **the ticking countdown actually ticks** on the owner's real phones,
   resolving the one open question the best-effort research-backed caveat above was flagged for.
-- 🔄 **Deferred at the owner's own request, not forgotten**: Siri support (via App Intents — real
-  and buildable, confirmed via research; requires the app to briefly foreground itself when
-  actually placing a call, a real Apple-enforced constraint, not a design choice) and "Respond
-  with Text" (Apple's own version is genuinely unavailable to third-party CallKit apps — confirmed
-  via research and via a real screenshot showing no "Message" quick action even appears; the
-  buildable alternative is an in-app quick-reply delivered as a regular push notification after
-  declining, not a literal lock-screen button). Both wanted "in the future," after everything
-  already shipped is confirmed solid — see DECISIONS.md for the full research on both.
+- 🔄 **Deferred at the owner's own request, not forgotten** — three features, wanted "in the
+  future," once everything already shipped is confirmed solid:
+  1. **Siri support** (via App Intents — real and buildable, confirmed via research; requires the
+     app to briefly foreground itself when actually placing a call, a real Apple-enforced
+     constraint, not a design choice).
+  2. **"Respond with Text"** (Apple's own version is genuinely unavailable to third-party CallKit
+     apps — confirmed via research and via a real screenshot showing no "Message" quick action
+     even appears; the buildable alternative is an in-app quick-reply delivered as a regular push
+     notification after declining, not a literal lock-screen button).
+  3. **Per-connection nicknames** — found while the owner asked how names work: today, a
+     connection's displayed name (People list, lock screen, History) is entirely
+     self-reported and freely editable via Settings at any time, with zero validation — a
+     connection really could rename themselves to "Mom" as a prank, and it would show up
+     exactly that way. The real fix, matching how Contacts apps solve this, is a private,
+     per-viewer nickname that overrides what's shown on *your* side only, independent of
+     whatever the other person calls themselves. Real design questions still open (set at
+     connection time vs. renamable anytime from the People list, or both) — not yet decided.
+  See DECISIONS.md for the full research behind #1 and #2.
 
 ## Phase 6 — Timer enforcement ✅ complete — all three planned layers now real
 **Correction to an earlier claim in this section**: the client-side disconnect-at-zero was
@@ -168,7 +178,8 @@ fixed. Build 23's real CallKit test proved that wrong — grepping the codebase 
 (the status this mechanism produces) found it was only ever implemented in `MockVoiceService`;
 `TwilioVoiceAdapter`, the real adapter, never once produced it. Fixed in build 24:
 `TwilioVoiceAdapter` now schedules its own local expiry from `connectedAt` and genuinely calls
-`call.disconnect()` at zero — confirmed working on a real device in build 25.
+`call.disconnect()` at zero — confirmed on a real device: with the countdown now visibly ticking
+down to zero, the owner watched it happen and confirmed the call actually hangs up at that point.
 
 **The third layer — the `pg_cron`/`pg_net` sweep backstop — is now built too**, and not
 speculatively: asked to keep troubleshooting before moving to new features, a direct database
