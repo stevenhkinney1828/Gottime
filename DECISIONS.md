@@ -2588,3 +2588,20 @@ confirmed each one resolved to the status `planSweep`'s own rules say it should 
 
 No iOS changes this round — backend and infrastructure only, so no new build number. Backend
 suite: 55/55 passing (47 plus 8 new), `deno fmt`/`deno lint` clean.
+
+## Real device timing explains "33 seconds felt long," and gets shortened on request
+
+Testing a genuine missed call (letting it ring untouched), the owner timed it at 33 seconds and
+called it out as feeling long. Checked, not guessed: `twiml-voice/logic.ts`'s `<Dial>` element
+set `timeLimit` (the connected-call duration cap) but never set `timeout` (how long Twilio rings
+before giving up and reporting no-answer) — Twilio's own documented default for an unset
+`timeout` is 30 seconds, and the remaining ~3 seconds is real push-delivery/processing overhead.
+The owner confirmed this explanation matched exactly ("30 seconds is exact") and asked for "low
+20s" instead. Added an explicit `RING_TIMEOUT_SECONDS = 20` constant and set `timeout="20"` on
+the `<Dial>` element. `twimlVoice_test.ts` updated to match. Deployed
+(`npx supabase functions deploy twiml-voice`) and sanity-checked directly — a raw, content-type-
+less POST returned a real `500` (an artifact of that specific test request being malformed, not a
+regression: `req.formData()` throws when there's no parseable body at all, uncaught, matching
+this function's pre-existing behavior, untouched by this change); a properly form-encoded POST
+(matching how Twilio actually calls this) correctly returned `200` with the graceful
+`<Reject/>` TwiML. All 55 backend tests still pass. No iOS changes.

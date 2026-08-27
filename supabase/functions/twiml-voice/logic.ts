@@ -4,6 +4,13 @@
 // rather than a replacement for it, timeLimit on <Dial>, the "client:identity" From format)
 // was checked against Twilio's current TwiML docs before writing this — see DECISIONS.md.
 
+/** How long Twilio rings the recipient before giving up and reporting "no-answer" — distinct
+ * from `timeLimit` (the connected-call duration cap, driven by the caller's own requested
+ * duration). Left unset until the owner timed a real missed call at 33s and traced it to
+ * Twilio's own undocumented-in-code default of 30s; explicit now, lowered per the owner's own
+ * request ("low 20s... 30 seconds seems long"). See DECISIONS.md. */
+const RING_TIMEOUT_SECONDS = 20;
+
 export interface CallSessionForTwiml {
   id: string;
   callerId: string;
@@ -31,7 +38,7 @@ export function buildDialTwiml(
     encodeURIComponent(session.id)
   }`;
   return '<?xml version="1.0" encoding="UTF-8"?>' +
-    `<Response><Dial timeLimit="${session.requestedDurationSeconds}">` +
+    `<Response><Dial timeLimit="${session.requestedDurationSeconds}" timeout="${RING_TIMEOUT_SECONDS}">` +
     `<Client statusCallbackEvent="ringing answered completed" ` +
     `statusCallback="${xmlEscape(statusCallbackUrl)}" statusCallbackMethod="POST">` +
     `<Parameter name="callSessionId" value="${xmlEscape(session.id)}"/>` +

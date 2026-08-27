@@ -1,6 +1,6 @@
 # Build Status
 
-Last updated: 2026-08-27 (build 25 confirmed working on a real device, including the ticking countdown; the Phase 6 sweep backstop is now built, deployed, scheduled, and independently verified against the live project)
+Last updated: 2026-08-27 (build 25 confirmed working on a real device, including the ticking countdown; the Phase 6 sweep backstop is built and verified live; a missed call's ring timeout, timed by the owner at 33s and traced to Twilio's own 30s default, is now an explicit 20s, deployed and verified)
 
 **Current phase: Phase 5 — CallKit integration, essentially complete and confirmed. Phase 6 — Timer enforcement, now fully complete across all three planned layers.** Phase 4's real two-way calling, CallKit lock-screen answering/declining, the auto-end-at-zero fix, real History, the live ticking countdown, and the optional call topic are all built and confirmed working on real devices (see below for the full sequence). While confirming all of this, a direct database query surfaced a real, previously-hidden gap — call sessions that never resolve on their own when a call attempt gets interrupted — which is exactly what Phase 6's long-planned `pg_cron`/`pg_net` sweep backstop exists to catch; it's now built and verified live. Two more features (Siri, "Respond with Text") were discussed and researched but explicitly deferred at the owner's own request until everything already shipped is confirmed solid — see the bottom of Phase 5 below.
 
@@ -198,6 +198,13 @@ other migration still applies and still gets its RLS checks run normally).
 
 All three of Phase 6's originally-planned enforcement layers (client-side, per-device disconnect;
 server-side status recording; and now this backstop sweep) are real and independently verified.
+
+**A genuine missed call (left ringing, untouched) was also explicitly tested and confirmed** —
+resolves to "Missed" in History correctly, not stuck as "In progress." The owner timed it at 33
+seconds and flagged it as feeling long; traced to Twilio's `<Dial>` never setting its own
+`timeout` attribute (distinct from `timeLimit`), so it fell back to Twilio's undocumented-in-code
+30s default. Made explicit and lowered to 20s per the owner's own request ("low 20s... 30 seconds
+seems long") — deployed and sanity-checked directly against the live project.
 
 ## Also fixed in build 24: History was showing mock data, not real calls
 `callHistoryService` had been deliberately left on `MockEnvironment` since Phase 1 while the

@@ -12,7 +12,7 @@ Deno.test("builds a Dial/Client with the exact documented attribute placement", 
     "https://example.supabase.co/functions/v1/twilio-status-callback",
   );
 
-  assertStringIncludes(twiml, '<Dial timeLimit="300">');
+  assertStringIncludes(twiml, '<Dial timeLimit="300" timeout="20">');
   assertStringIncludes(
     twiml,
     '<Client statusCallbackEvent="ringing answered completed" ' +
