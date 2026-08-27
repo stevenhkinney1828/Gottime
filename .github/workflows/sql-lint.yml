@@ -52,6 +52,15 @@ jobs:
       - name: Apply migrations in order
         run: |
           for f in supabase/migrations/*.sql; do
+            # pg_cron/pg_net require shared_preload_libraries set at server startup -- a
+            # config-time flag this plain postgres:17 service container isn't started with, so
+            # `create extension` for either fails here even though both work fine on the real
+            # Supabase project (which bundles them preconfigured). Verified there instead --
+            # see KNOWN_LIMITATIONS.md and DECISIONS.md.
+            if [[ "$f" == *0013_expire_call_sweep_cron.sql ]]; then
+              echo "Skipping $f (needs pg_cron/pg_net, not available on a vanilla Postgres container -- see KNOWN_LIMITATIONS.md)"
+              continue
+            fi
             echo "Applying $f"
             psql -v ON_ERROR_STOP=1 -f "$f"
           done

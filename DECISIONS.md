@@ -2484,3 +2484,107 @@ specifically needs to settle the one genuinely open question: does the lock-scre
 actually tick, or does it sit frozen at its first value (in which case the in-app countdown, once
 the phone is unlocked, remains the reliable path) — plus the ordinary check that a typed topic
 shows up correctly and a blank one doesn't show anything at all.
+
+## Build 25 confirmed on a real device — the ticking countdown genuinely works
+
+The owner tested build 25 on real, current hardware: the lock-screen countdown **actually
+ticks**, the topic field works end to end, and the declined-vs-missed distinction (build 21) is
+confirmed with real data too. This resolves the one open uncertainty flagged in `CallKitAdapter`'s
+own comment — worth noting plainly, since that comment (and BUILD_STATUS.md) should no longer
+read as "might not work," now that it's confirmed working on the owner's actual phones. Left the
+code comments themselves as historical record of the real research that went into building it
+cautiously, rather than rewriting them to sound more confident in hindsight.
+
+Also asked about two more things, both researched (not guessed) before answering:
+
+**A two-line lock-screen display** (name on one line, duration+topic on another) — no confirmed
+API for this. `CXCallUpdate` gives a `.generic`-handle call exactly one text field
+(`localizedCallerName`); the two-line "contact name / phone number" layout real Phone calls show
+is tied specifically to a `.phoneNumber`-type handle, which doesn't apply here (no real phone
+numbers in this system at all). Told the owner honestly rather than guess-implementing a
+`remoteHandle`/`localizedCallerName` split with no evidence it would actually render as two
+lines for this handle type.
+
+**Siri support** — researched via App Intents (not old-style SiriKit custom intents, which don't
+cover this shape of action well). Confirmed real and buildable: a custom `AppIntent` with
+`@Parameter`s for recipient/duration/topic, an `AppEntityQuery` backing recipient resolution
+against the app's own connections, and Siri's own natural-language parameter parsing. One
+real, confirmed constraint: Apple requires `openAppWhenRun = true` for an intent that starts a
+CallKit call — a real forum-reported error (`CXErrorCodeRequestTransactionError.invalidAction`)
+fires if a VoIP call is started from a fully backgrounded App Intent, so the app must briefly
+foreground itself as part of placing the call; there's no way to make it fully silent/background.
+
+**Both deferred at the owner's own request** — noted here for continuity, not because either
+needs more research: they want "Respond with Text" (see the build-24-era decision above for why
+a literal CallKit hook doesn't exist for this, and the in-app-quick-reply alternative discussed
+instead) and Siri built later, once everything already shipped is confirmed solid first.
+
+## Real evidence surfaces a genuine gap: call sessions stuck forever with no way to resolve
+
+Asked to keep troubleshooting before moving to new features, queried `call_sessions` directly
+(not just trusting the app's own UI) and found something serious: dozens of rows sitting in
+`created`/`outgoing`/`ringing` — some for **over a day** — with `ended_at` still null. Twilio's
+own ring timeouts run well under a minute, so whatever really happened to these calls, Twilio's
+side of it ended long ago; nothing ever told the *database* that. Root cause: `.missed`/`.failed`
+resolution has only ever been driven by the *caller's own device* processing its own
+`callDidDisconnect` (see the build-14/15/20 entries above) — exactly the layer that a killed app,
+a dropped network, or (very plausibly, during this project's own rapid dev testing) simply
+starting a new call attempt without ever letting the previous one resolve, can silently prevent
+from ever running. This is precisely the failure mode the original build plan's third
+duration-enforcement layer — "a `pg_cron`/`pg_net` sweep force-completes any session past its
+expiry" — was designed to catch, and which `BUILD_STATUS.md` has correctly listed as "not yet
+built" since Phase 6 began. Real data now proves it's a live gap, not a hypothetical one.
+
+**Built the sweep for real.** `expire-call-sweep/logic.ts`: a pure `planSweep(candidates, now)`
+function, branching only on whether `connectedAt` is set (not the exact current status) — a
+never-connected session gets `NEVER_CONNECTED_GRACE_SECONDS` (5 minutes, generously past any
+real ring duration) from `initiatedAt`, resolving to `missed` if it had at least reached
+`ringing` (matches `TwilioVoiceAdapter.callDidDisconnect`'s own existing convention: reached the
+recipient but never resolved reads as "never answered in time" regardless of *why*) or `failed`
+otherwise; a connected session gets its own `requestedDurationSeconds` plus
+`CONNECTED_GRACE_SECONDS` (2 minutes slack, covering clock skew / a delayed signal without
+cutting off a real conversation) past `connectedAt`, resolving to `completed` with
+`actualDurationSeconds` computed the same uncapped way `CallStateMachine.apply` computes it
+client-side. `index.ts` wires this to a real `supabaseAdmin()` client (bypasses RLS
+deliberately — this sweeps every user's stale sessions, not just one), guarding each update with
+`.eq("status", update.fromStatus)` so a session that resolved normally between the fetch and the
+update is safely skipped rather than double-reported — the same idempotent-by-construction
+pattern `twilio-status-callback` already established. 8 new tests; the whole
+`functionSkeletons_test.ts` stub entry retired the same way `request-call`/`call-action`/etc.
+already did once they graduated.
+
+**Scheduling required a real secret-handling decision.** The sweep needs to run periodically and
+call the deployed Edge Function with real, privileged (service-role) credentials — but nothing
+about *how* should ever be committed to git in a form that leaks that credential.
+`0013_expire_call_sweep_cron.sql` enables `pg_cron`/`pg_net` and schedules a `net.http_post` call
+every minute, authenticated with `Authorization: Bearer` read from
+`vault.decrypted_secrets where name = 'expire_call_sweep_service_role_key'` — the migration file
+itself never contains the actual key. The real secret was provisioned once, directly against the
+live project via `vault.create_secret(...)`, run from a throwaway script (not committed) that
+reads the key from the same local `.env` every other admin operation in this project already
+uses, with the query itself passed through the Management API's raw-SQL endpoint (which, checked
+directly, does not support bind parameters at all — confirmed by a real `42P02` error, not
+assumed — so the value is interpolated into Postgres dollar-quoted SQL text instead, safe here
+since a real JWT only ever contains base64url characters that can't break out of a string
+regardless).
+
+**Found and fixed a real CI gap in the same pass**: `sql-lint.yml` applies every migration file
+against a plain `postgres:17` service container to verify RLS — but `pg_cron`/`pg_net` require
+`shared_preload_libraries` set at server startup, a config-time flag that container was never
+started with, so `create extension pg_cron` would fail there even though it works fine on the
+real, preconfigured Supabase project. Fixed by having the workflow explicitly skip
+`0013_expire_call_sweep_cron.sql` (every other migration still applies and still gets its RLS
+assertions run normally) — documented in `KNOWN_LIMITATIONS.md` alongside the project's other
+already-documented local-vs-real-project gaps, in the same spirit rather than a new pattern.
+
+**Verified with real evidence at every layer, not just trusted that setup succeeded**: extensions
+installed; the vault secret's *length* (not its value) confirmed to match the real key
+character-for-character; the cron job confirmed registered and `active` in `cron.job`; two real
+scheduled ticks confirmed `succeeded` in `cron.job_run_details`; the actual HTTP responses pulled
+from `net._http_response` confirmed genuine `200`s, not just that pg_net queued the request. A
+manual first invocation, run before scheduling, swept all 45 genuinely stale rows found earlier —
+re-querying immediately after confirmed zero stuck sessions remained, and a follow-up query
+confirmed each one resolved to the status `planSweep`'s own rules say it should have.
+
+No iOS changes this round — backend and infrastructure only, so no new build number. Backend
+suite: 55/55 passing (47 plus 8 new), `deno fmt`/`deno lint` clean.

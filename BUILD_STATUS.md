@@ -1,8 +1,8 @@
 # Build Status
 
-Last updated: 2026-08-26 (build 25 confirmed green on CI, both jobs, and uploaded to TestFlight; migration 0012 applied and request-call redeployed to the live project, both independently verified)
+Last updated: 2026-08-27 (build 25 confirmed working on a real device, including the ticking countdown; the Phase 6 sweep backstop is now built, deployed, scheduled, and independently verified against the live project)
 
-**Current phase: Phase 5 — CallKit integration (Phase 4's real two-way calling is confirmed working end to end on real devices — audio, timer sync, arbitrary durations. CallKit lock-screen answering is confirmed working too (build 23). Build 23's real test also found the auto-end-at-zero mechanism previously believed to "ride along for free" from Phase 4 was never actually built for the real adapter — only for the mock — and that History was still showing mocked data; both fixed in build 24. Owner then asked for a live ticking lock-screen countdown and an optional caller-supplied call topic — both built in build 25, along with a related CallKit-teardown-notification fix; the countdown is flagged best-effort pending real-device confirmation, since research found a documented, unresolved Apple bug affecting exactly this mechanism — see bottom)**
+**Current phase: Phase 5 — CallKit integration, essentially complete and confirmed. Phase 6 — Timer enforcement, now fully complete across all three planned layers.** Phase 4's real two-way calling, CallKit lock-screen answering/declining, the auto-end-at-zero fix, real History, the live ticking countdown, and the optional call topic are all built and confirmed working on real devices (see below for the full sequence). While confirming all of this, a direct database query surfaced a real, previously-hidden gap — call sessions that never resolve on their own when a call attempt gets interrupted — which is exactly what Phase 6's long-planned `pg_cron`/`pg_net` sweep backstop exists to catch; it's now built and verified live. Two more features (Siri, "Respond with Text") were discussed and researched but explicitly deferred at the owner's own request until everything already shipped is confirmed solid — see the bottom of Phase 5 below.
 
 Phase 0 and Phase 1 are both complete, CI-verified, and committed.
 
@@ -145,28 +145,48 @@ work directly from the lock screen.
   reason it didn't itself initiate (a remote hangup, or this device's own new auto-expiry timeout)
   — see DECISIONS.md for the full account, including why this needed a closure
   (`TwilioVoiceAdapter.onVoiceEvent`) rather than a second consumer of the existing event stream.
-- 🔄 **Not yet confirmed**: whether native Answer/Decline both work, whether declined vs.
-  no-answer now show as genuinely distinct History outcomes (build 21's own fix), whether the
-  ticking countdown actually ticks, and whether a typed topic shows up correctly — needs the same
-  deliberate real-call testing as build 24/25.
+- ✅ **Build 25 confirmed on a real device, including the one genuinely uncertain part**: native
+  Answer/Decline both work (Decline on the actual lock screen is the iOS side-button gesture, not
+  an on-screen button — confirmed from a real screenshot, standard OS behavior for any call, not
+  specific to this app); declined vs. no-answer confirmed as genuinely distinct in real History
+  data (verified directly against the database, not just the app's own display); the typed topic
+  works end to end; and **the ticking countdown actually ticks** on the owner's real phones,
+  resolving the one open question the best-effort research-backed caveat above was flagged for.
+- 🔄 **Deferred at the owner's own request, not forgotten**: Siri support (via App Intents — real
+  and buildable, confirmed via research; requires the app to briefly foreground itself when
+  actually placing a call, a real Apple-enforced constraint, not a design choice) and "Respond
+  with Text" (Apple's own version is genuinely unavailable to third-party CallKit apps — confirmed
+  via research and via a real screenshot showing no "Message" quick action even appears; the
+  buildable alternative is an in-app quick-reply delivered as a regular push notification after
+  declining, not a literal lock-screen button). Both wanted "in the future," after everything
+  already shipped is confirmed solid — see DECISIONS.md for the full research on both.
 
-## Phase 6 — Timer enforcement 🔄 core mechanism actually just built for real
-**Correction to this section's previous claim**: the client-side disconnect-at-zero was
+## Phase 6 — Timer enforcement ✅ complete — all three planned layers now real
+**Correction to an earlier claim in this section**: the client-side disconnect-at-zero was
 previously believed confirmed working on real devices "for free" once Phase 4's signaling was
 fixed. Build 23's real CallKit test proved that wrong — grepping the codebase for `.timedOut`
 (the status this mechanism produces) found it was only ever implemented in `MockVoiceService`;
-`TwilioVoiceAdapter`, the real adapter, never once produced it. Whatever ended that earlier
-Phase 4 test call was not this mechanism. Fixed in build 24: `TwilioVoiceAdapter` now schedules
-its own local expiry from `connectedAt` (mirroring `MockVoiceService.scheduleAutoExpiry` exactly)
-and genuinely calls `call.disconnect()` at zero — runs independently on both the caller's and the
-recipient's own device, with no dependency on any view being on screen, which is what actually
-matters for a CallKit-answered, locked-phone call. See DECISIONS.md for the full root-cause
-account. Build 24 confirmed green on CI (both jobs) and uploaded to TestFlight — **not yet
-confirmed on a real device**; needs the same locked-phone/CallKit test as build 23, this time
-specifically watching that the call actually ends (audio stops) on the answering phone when the
-timer reaches zero. Not yet built: the `pg_cron`/`pg_net` sweep backstop (defense-in-depth for a
-call that somehow slips past the client's own cutoff — part of the original three-layer design,
-low priority relative to confirming the layer above actually works on a real device now).
+`TwilioVoiceAdapter`, the real adapter, never once produced it. Fixed in build 24:
+`TwilioVoiceAdapter` now schedules its own local expiry from `connectedAt` and genuinely calls
+`call.disconnect()` at zero — confirmed working on a real device in build 25.
+
+**The third layer — the `pg_cron`/`pg_net` sweep backstop — is now built too**, and not
+speculatively: asked to keep troubleshooting before moving to new features, a direct database
+query found dozens of real `call_sessions` rows stuck in `created`/`outgoing`/`ringing` for
+hours — one for over a day — with nothing ever going to resolve them (the only thing that ever
+did was the caller's own device, which a killed app, a dropped network, or abandoned testing can
+silently prevent from reporting back). Built `expire-call-sweep` for real (pure, tested logic;
+runs every minute via `pg_cron` + `pg_net`, authenticated with a service-role credential stored in
+Supabase Vault, never committed to git); a manual first run swept all 45 genuinely stale sessions
+found; the cron job's own scheduled ticks were independently confirmed actually firing and
+succeeding (real `200` responses pulled from `net._http_response`, not just trusted). See
+DECISIONS.md for the full account, including a real CI gap this surfaced and fixed
+(`sql-lint.yml` now skips this one migration — its plain Postgres container can't run
+`pg_cron`/`pg_net`, which need server-level config a Docker container isn't started with; every
+other migration still applies and still gets its RLS checks run normally).
+
+All three of Phase 6's originally-planned enforcement layers (client-side, per-device disconnect;
+server-side status recording; and now this backstop sweep) are real and independently verified.
 
 ## Also fixed in build 24: History was showing mock data, not real calls
 `callHistoryService` had been deliberately left on `MockEnvironment` since Phase 1 while the

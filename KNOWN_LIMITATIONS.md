@@ -22,6 +22,15 @@ see BETA_FEEDBACK.md (Phase 9+) for that.
 - **No Simulator access.** Without Xcode, there is no way to visually run the app locally —
   not even in a simulator. Visual verification happens via CI screenshot/XCUITest output and,
   from Phase 4 onward, real devices via TestFlight.
+- **`pg_cron`/`pg_net` can't run against `sql-lint.yml`'s plain `postgres:17` service
+  container.** Both require `shared_preload_libraries` set at server startup — a config-time
+  flag a vanilla Docker Postgres image isn't started with — so `create extension pg_cron`
+  fails there even though it works fine on the real Supabase project (which bundles both,
+  preconfigured). `sql-lint.yml` skips `0013_expire_call_sweep_cron.sql` specifically for this
+  reason; every other migration still applies and gets its RLS assertions run normally. The
+  skipped migration was applied directly against the real project and independently verified
+  there instead (the cron job registered, fired on schedule, and a real sweep resolved 45
+  genuinely stuck call sessions found via direct query — see DECISIONS.md).
 
 ## Tracked, non-blocking compiler warnings
 
